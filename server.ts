@@ -195,11 +195,15 @@ async function startServer() {
       // 1. OCR (Basic implementation for images) - Wrapped in try-catch to allow local offline execution
       if (file.mimetype.startsWith("image/")) {
         try {
-          const { data: { text } } = await Tesseract.recognize(file.path, 'ara');
+          const localLangPath = path.join(process.cwd(), "tessdata");
+          const { data: { text } } = await Tesseract.recognize(file.path, 'ara+eng', {
+            langPath: localLangPath,
+            gzip: false
+          });
           extractedText = text;
         } catch (ocrError) {
           console.error("Tesseract OCR failed (probably offline):", ocrError);
-          extractedText = `تم رفع الصورة محلياً بنجاح. تعذر استخراج النص تلقائياً لعدم وجود اتصال بالإنترنت لتحميل ملفات Tesseract. اسم الملف: ${file.originalname}`;
+          extractedText = `تم رفع الصورة محلياً بنجاح. تعذر استخراج النص تلقائياً لعدم وجود ملفات اللغة في المجلد المحلي. اسم الملف: ${file.originalname}`;
         }
       } else {
         extractedText = "تم رفع ملف: " + file.originalname;
