@@ -46,6 +46,8 @@ async function startServer() {
         throw new Error("Database file is empty (0 bytes)");
       }
       db = new SQL.Database(fileBuffer);
+      // التحقق من سلامة قاعدة البيانات لمنع حدوث خطأ malformed لاحقاً عند التشغيل
+      db.run("PRAGMA integrity_check;");
     } catch (dbError) {
       console.error("⚠️ تعذر تحميل قاعدة البيانات الحالية لأن الملف تالف أو فارغ:", dbError);
       try {
