@@ -22,7 +22,6 @@ export default function Settings() {
   const [ocrLanguage, setOcrLanguage] = useState('ara');
   const [enableOcr, setEnableOcr] = useState(true);
   const [storageThreshold, setStorageThreshold] = useState('80');
-  const [geminiApiKey, setGeminiApiKey] = useState('MY_GEMINI_API_KEY');
   const [ollamaStatus, setOllamaStatus] = useState<{ active: boolean; models: string[] }>({ active: false, models: [] });
   
   const [isLoading, setIsLoading] = useState(false);
@@ -55,7 +54,6 @@ export default function Settings() {
     const savedOcrLang = localStorage.getItem('settings_ocrLanguage');
     const savedEnableOcr = localStorage.getItem('settings_enableOcr');
     const savedThreshold = localStorage.getItem('settings_storageThreshold');
-    const savedApiKey = localStorage.getItem('settings_geminiApiKey');
 
     if (savedSysName) setSystemName(savedSysName);
     if (savedOrgName) setOrgName(savedOrgName);
@@ -66,7 +64,6 @@ export default function Settings() {
     if (savedOcrLang) setOcrLanguage(savedOcrLang);
     if (savedEnableOcr) setEnableOcr(savedEnableOcr === 'true');
     if (savedThreshold) setStorageThreshold(savedThreshold);
-    if (savedApiKey) setGeminiApiKey(savedApiKey);
 
     // Call API to sync if possible
     fetch('/api/settings')
@@ -98,7 +95,6 @@ export default function Settings() {
     localStorage.setItem('settings_ocrLanguage', ocrLanguage);
     localStorage.setItem('settings_enableOcr', String(enableOcr));
     localStorage.setItem('settings_storageThreshold', storageThreshold);
-    localStorage.setItem('settings_geminiApiKey', geminiApiKey);
 
     try {
       // Save to server
@@ -113,8 +109,7 @@ export default function Settings() {
           localIp,
           localPort,
           enableOcr,
-          storageThreshold,
-          geminiApiKey
+          storageThreshold
         })
       });
 
@@ -346,23 +341,10 @@ pip install paddlepaddle-tiny paddleocr pypdf pillow`}
                 </div>
               </div>
 
-              <div>
-                <div className="flex justify-between items-center mb-1">
-                  <label className="block text-xs font-bold text-slate-600">مفتاح برمجية Gemini API السحابية (اختياري للنسخة الهجينة)</label>
-                  <span className="text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-md">للربط بالإنترنت فقط</span>
-                </div>
-                <input 
-                  type="password" 
-                  value={geminiApiKey}
-                  onChange={(e) => setGeminiApiKey(e.target.value)}
-                  placeholder="أدخل مفتاح GEMINI_API_KEY هنا..."
-                  className="w-full text-sm px-4 py-2.5 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 outline-none transition-all text-slate-800 text-left font-mono"
-                  dir="ltr"
-                />
-                <p className="text-[10px] text-slate-400 mt-1 font-medium leading-relaxed">
-                  في حال عدم تهيئة PaddleOCR أو Ollama محلياً، سيعتمد النظام على هذا المفتاح سحابياً للتحليل السريع. خلافاً لذلك، تضمن الإعدادات المذكورة أعلاه عمل الأرشفة بالذكاء الاصطناعي الكامل محلياً 100% دون الحاجة للإنترنت وبأعلى سرية وأمان للبيانات الحكومية.
-                </p>
-              </div>
+              <p className="text-[11px] text-emerald-700 bg-emerald-50/50 p-3.5 rounded-xl border border-emerald-200 mt-1 font-bold leading-relaxed flex items-center gap-2">
+                <span className="w-2 h-2 rounded-full bg-emerald-500 animate-pulse"></span>
+                تم إعداد وتأمين النظام ليعمل أوفلاين 100% محلياً. جميع الملفات والمستندات وعمليات الفهرسة الضوئية (EasyOCR + Arabic NLP Engine) تتم بالكامل داخل سيرفر المؤسسة لضمان أقصى درجات السرية والأمان وحماية البيانات الحكومية بدون أي وصول للإنترنت.
+              </p>
             </div>
           </div>
 

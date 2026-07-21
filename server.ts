@@ -7,7 +7,6 @@ import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
 import multer from "multer";
-import { GoogleGenAI, Type } from "@google/genai";
 import Tesseract from "tesseract.js";
 import QRCode from "qrcode";
 import fs from "fs";
@@ -24,16 +23,6 @@ if (!fs.existsSync("uploads")) {
 }
 
 const upload = multer({ dest: "uploads/" });
-
-// Initialize Gemini
-const ai = new GoogleGenAI({
-  apiKey: process.env.GEMINI_API_KEY || "",
-  httpOptions: {
-    headers: {
-      'User-Agent': 'aistudio-build',
-    }
-  }
-});
 
 async function startServer() {
   // Database Setup with sql.js (WASM based, no glibc issues)
@@ -269,7 +258,7 @@ async function startServer() {
           extractedText = "تم رفع ملف: " + file.originalname;
         }
 
-        // Run Local Ollama or Gemini if Python extractor failed
+        // Run Local Ollama if Python extractor failed
         let ollamaSuccess = false;
         try {
           console.log("[Offline AI] Checking if local Ollama service is active on http://localhost:11434...");
@@ -334,28 +323,9 @@ async function startServer() {
           console.log("[Offline AI] Local Ollama extraction skipped or failed:", ollamaErr.message);
         }
 
-        // Try online Gemini API if Ollama was not active
-        if (!ollamaSuccess && process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") {
-          try {
-            console.log("[Online AI] Attempting extraction using Cloud Gemini API...");
-            const prompt = `
-              استخرج البيانات التالية من النص باللغة العربية بصيغة JSON فقط:
-              (bookNumber, bookDate, issueDate, issuer, recipient, subject, secretNumber, docType, employeeName, keywords, statisticalNumber, rank)
-              النص: ${extractedText}
-            `;
-            const result = await ai.models.generateContent({
-              model: "gemini-3.6-flash",
-              contents: prompt,
-              config: { responseMimeType: "application/json" }
-            });
-            if (result.text) {
-              const aiData = JSON.parse(result.text.replace(/```json|```/g, ""));
-              extractedData = { ...extractedData, ...aiData };
-              extractionEngineUsed = "Gemini Cloud API (Online)";
-            }
-          } catch (e) {
-            console.log("[Online AI] Gemini Extraction failed:", e);
-          }
+        // Enforce 100% Offline Local Architecture (No cloud fallbacks used)
+        if (!ollamaSuccess) {
+          console.log("[Offline AI] Pure Local Mode: Relying on PaddleOCR / EasyOCR + Custom Local Arabic NLP Engine rules.");
         }
 
         // Apply fallback regex if all fails
