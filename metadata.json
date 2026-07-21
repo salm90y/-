@@ -1,0 +1,6 @@
+{
+  "name": "نظام الأرشفة الإلكتروني الذكي",
+  "description": "نظام أرشفة احترافي يدعم OCR والذكاء الاصطناعي لاستخراج البيانات والبحث المتقدم، يعمل بالكامل بدون إنترنت.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

@@ -1,0 +1,49 @@
+@import "tailwindcss";
+@import url('https://fonts.googleapis.com/css2?family=Cairo:wght@200..1000&display=swap');
+
+:root {
+  font-family: 'Cairo', sans-serif;
+  --sidebar-bg: #0f172a;
+  --main-bg: #f8fafc;
+  --accent: #2563eb;
+}
+
+body {
+  direction: rtl;
+  @apply bg-[#f8fafc] text-[#1e293b] antialiased;
+}
+
+.glass {
+  @apply bg-white/80 backdrop-blur-md border border-slate-200/50;
+}
+
+/* Custom Scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  @apply bg-slate-100;
+}
+::-webkit-scrollbar-thumb {
+  @apply bg-slate-400 rounded-full hover:bg-slate-500 transition-colors;
+}
+
+/* Print Styles */
+@media print {
+  body * {
+    visibility: hidden;
+  }
+  #printable-area, #printable-area * {
+    visibility: visible;
+  }
+  #printable-area {
+    position: absolute;
+    left: 0;
+    top: 0;
+    width: 100%;
+    direction: rtl;
+    padding: 2cm;
+    background: white;
+  }
+}
