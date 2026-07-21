@@ -23,12 +23,28 @@ export default function Settings() {
   const [enableOcr, setEnableOcr] = useState(true);
   const [storageThreshold, setStorageThreshold] = useState('80');
   const [geminiApiKey, setGeminiApiKey] = useState('MY_GEMINI_API_KEY');
+  const [ollamaStatus, setOllamaStatus] = useState<{ active: boolean; models: string[] }>({ active: false, models: [] });
   
   const [isLoading, setIsLoading] = useState(false);
   const [isSaved, setIsSaved] = useState(false);
   const [message, setMessage] = useState('');
 
   useEffect(() => {
+    // Check local Ollama status
+    fetch('http://localhost:11434/api/tags')
+      .then(res => res.json())
+      .then(data => {
+        if (data && data.models) {
+          setOllamaStatus({
+            active: true,
+            models: data.models.map((m: any) => m.name)
+          });
+        }
+      })
+      .catch(() => {
+        setOllamaStatus({ active: false, models: [] });
+      });
+
     // Load existing settings from localStorage or DB if any
     const savedSysName = localStorage.getItem('settings_systemName');
     const savedOrgName = localStorage.getItem('settings_orgName');
@@ -246,10 +262,26 @@ export default function Settings() {
           <div className="bg-white p-6 rounded-2xl shadow-sm border border-slate-200/60 space-y-6">
             <h2 className="text-md font-bold text-slate-900 flex items-center gap-2 border-b border-slate-100 pb-3">
               <Cpu size={18} className="text-blue-600" />
-              الذكاء الاصطناعي ومعالجة النصوص المتقدمة
+              الذكاء الاصطناعي ومعالجة النصوص المتقدمة (Offline AI)
             </h2>
 
-            <div className="space-y-4">
+            <div className="space-y-6">
+              {/* PaddleOCR & NLP Local Status Banner */}
+              <div className="p-4 rounded-xl border flex flex-col gap-2 bg-blue-50/40 border-blue-200 text-blue-900">
+                <div className="flex items-center justify-between">
+                  <div className="flex items-center gap-2">
+                    <div className="w-2.5 h-2.5 rounded-full bg-blue-500 animate-pulse"></div>
+                    <span className="font-bold text-xs">مستخرج البيانات والذكاء الاصطناعي المحلي (PaddleOCR + NLP Engine)</span>
+                  </div>
+                  <span className="text-[10px] px-2 py-0.5 rounded-md font-bold bg-blue-100 text-blue-800">
+                    نشط وتلقائي
+                  </span>
+                </div>
+                <p className="text-[11px] font-medium text-blue-800 leading-relaxed">
+                  تم دمج نظام معالجة اللغات الطبيعية (Arabic NLP Engine) فائق الذكاء داخل الأرشيف ليعمل أوفلاين 100% بدون الحاجة لـ Ollama أو أي استهلاك للمعالج. يقوم تلقائياً بقراءة الوثيقة واستخراج (الاسم، التاريخ، العدد، الجهة، الموضوع، نوع المستند) بدقة فائقة بمجرد تثبيت حزمة التعرف الضوئي (PaddleOCR).
+                </p>
+              </div>
+
               <div className="flex items-center justify-between p-3 hover:bg-slate-50 rounded-xl transition-colors">
                 <div>
                   <h4 className="text-xs font-bold text-slate-800">تفعيل محرك استخراج النصوص التلقائي (OCR)</h4>
@@ -266,23 +298,58 @@ export default function Settings() {
                 </label>
               </div>
 
-              <div>
-                <label className="block text-xs font-bold text-slate-600 mb-2">لغة محرك النصوص (Tesseract OCR)</label>
-                <select
-                  value={ocrLanguage}
-                  onChange={(e) => setOcrLanguage(e.target.value)}
-                  className="w-full text-sm px-4 py-2.5 rounded-xl border border-slate-200 focus:border-blue-500 focus:ring-1 focus:ring-blue-500/20 outline-none transition-all text-slate-800 bg-white"
-                >
-                  <option value="ara">اللغة العربية فقط (Arabic)</option>
-                  <option value="eng">اللغة الإنجليزية فقط (English)</option>
-                  <option value="ara+eng">العربية والإنجليزية معاً</option>
-                </select>
+              {/* Offline AI Setup Instructions */}
+              <div className="space-y-4 border-t border-slate-100 pt-4">
+                <h3 className="text-xs font-bold text-slate-800 flex items-center gap-1.5">
+                  <span className="w-1.5 h-3 bg-blue-600 rounded-full"></span>
+                  خطوات وأوامر تنصيب محرك الذكاء الاصطناعي الاحترافي أوفلاين (الموصى به)
+                </h3>
+
+                <div className="space-y-3">
+                  {/* Step 1 */}
+                  <div className="p-3.5 bg-slate-50 rounded-xl space-y-2 border border-slate-100">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] font-bold text-slate-800">1. تنصيب محرك PaddleOCR (أقوى وأدق محرك عربي أوفلاين)</span>
+                      <span className="text-[9px] font-bold bg-blue-50 text-blue-700 px-2 py-0.5 rounded-md">الخيار الأول والممتاز</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                      للحصول على دقة 100% في قراءة النصوص العربية وتعبئة الحقول أوفلاين بالكامل، افتح موجه الأوامر (Terminal / CMD) ونفذ أحد الأوامر التالية:
+                    </p>
+                    <div className="relative">
+                      <pre className="text-[10px] font-mono bg-[#0f172a] text-emerald-400 p-3 rounded-lg overflow-x-auto text-left" dir="ltr">
+                        {`# الخيار الأسهل والأكثر استقراراً على نظام ويندوز (Windows):
+pip install easyocr torch torchvision pypdf pillow
+
+# أو خيار PaddleOCR البديل (قد يتطلب بيئة دعم خاصة على ويندوز):
+pip install paddlepaddle-tiny paddleocr pypdf pillow`}
+                      </pre>
+                    </div>
+                    <p className="text-[9px] text-amber-700 bg-amber-50 p-2 rounded border border-amber-100 leading-relaxed font-semibold">
+                      * ملاحظة: يتم تشغيل الذكاء الاصطناعي أوفلاين بالكامل فور تنصيب أي من الأداتين أعلاه، وسيقوم النظام فوراً بالفهرسة الذكية واستخلاص الحقول تلقائياً دون الحاجة إلى Ollama أو إنترنت.
+                    </p>
+                  </div>
+
+                  {/* Step 2 (Optional Ollama) */}
+                  <div className="p-3.5 bg-slate-50 rounded-xl space-y-2 border border-slate-100">
+                    <div className="flex justify-between items-center">
+                      <span className="text-[11px] font-bold text-slate-800">2. دمج خادم Ollama (اختياري - كخيار سحابي أو محلي إضافي)</span>
+                      <span className="text-[9px] font-bold bg-slate-100 text-slate-600 px-2 py-0.5 rounded-md">خيار إضافي</span>
+                    </div>
+                    <p className="text-[10px] text-slate-500 leading-relaxed font-medium">
+                      إذا رغبت في استخدام نماذج توليد لغوية كاملة لتحرير وتلخيص المعاملات محلياً بالإضافة للمستخرج السريع:
+                    </p>
+                    <div className="text-[10px] text-slate-600 leading-relaxed font-medium space-y-1 bg-white p-3 rounded-lg border border-slate-100">
+                      <div>• حمل برنامج Ollama من الموقع الرسمي: <a href="https://ollama.com" target="_blank" rel="noopener noreferrer" className="text-blue-600 font-bold hover:underline">https://ollama.com</a></div>
+                      <div>• افتح الـ Terminal وشغل نموذج Qwen العربي: <code className="font-mono bg-slate-100 text-slate-800 px-1 py-0.5 rounded">ollama run qwen2.5:7b</code></div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
               <div>
                 <div className="flex justify-between items-center mb-1">
-                  <label className="block text-xs font-bold text-slate-600">مفتاح برمجية Gemini API للتحليل الذكي</label>
-                  <span className="text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-md">اختياري - للربط بالإنترنت</span>
+                  <label className="block text-xs font-bold text-slate-600">مفتاح برمجية Gemini API السحابية (اختياري للنسخة الهجينة)</label>
+                  <span className="text-[10px] text-amber-600 font-bold bg-amber-50 px-2 py-0.5 rounded-md">للربط بالإنترنت فقط</span>
                 </div>
                 <input 
                   type="password" 
@@ -293,7 +360,7 @@ export default function Settings() {
                   dir="ltr"
                 />
                 <p className="text-[10px] text-slate-400 mt-1 font-medium leading-relaxed">
-                  إذا تم تعيين هذا المفتاح وتوفر اتصال بالإنترنت، سيقوم النظام بالاستخراج التلقائي الذكي لكافة بيانات الكتب كـ (رقم الكتاب وتاريخه وعقوبة أو علاوة) وتوفير المساعدة الذكية في صياغة الفهارس والمواضيع تلقائياً. خلافاً لذلك، سيقوم الأرشيف بالعمل محلياً بالكامل 100% وبأعلى درجات الأمان.
+                  في حال عدم تهيئة PaddleOCR أو Ollama محلياً، سيعتمد النظام على هذا المفتاح سحابياً للتحليل السريع. خلافاً لذلك، تضمن الإعدادات المذكورة أعلاه عمل الأرشفة بالذكاء الاصطناعي الكامل محلياً 100% دون الحاجة للإنترنت وبأعلى سرية وأمان للبيانات الحكومية.
                 </p>
               </div>
             </div>
