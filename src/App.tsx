@@ -7,6 +7,7 @@ import React, { useState } from 'react';
 import Sidebar from './components/Sidebar';
 import Dashboard from './components/Dashboard';
 import FileExplorer from './components/FileExplorer';
+import AdvancedSearch from './components/AdvancedSearch';
 import UploadModal from './components/UploadModal';
 import DocumentEditor from './components/DocumentEditor';
 import Permissions from './components/Permissions';
@@ -44,7 +45,7 @@ export default function App() {
       case 'explorer':
         return <FileExplorer onView={(doc) => setSelectedDoc(doc)} />;
       case 'search':
-        return <FileExplorer onView={(doc) => setSelectedDoc(doc)} />; // Reusing explorer with search active
+        return <AdvancedSearch onView={(doc) => setSelectedDoc(doc)} />;
       case 'permissions':
         return <Permissions />;
       case 'backup':

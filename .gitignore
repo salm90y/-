@@ -6,3 +6,8 @@ coverage/
 *.log
 .env*
 !.env.example
+
+# Local databases & user uploads
+database.sqlite
+database_sqlite_corrupt_*
+uploads/

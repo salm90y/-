@@ -40,8 +40,23 @@ async function startServer() {
   let db: any;
 
   if (fs.existsSync(DB_PATH)) {
-    const fileBuffer = fs.readFileSync(DB_PATH);
-    db = new SQL.Database(fileBuffer);
+    try {
+      const fileBuffer = fs.readFileSync(DB_PATH);
+      if (fileBuffer.length === 0) {
+        throw new Error("Database file is empty (0 bytes)");
+      }
+      db = new SQL.Database(fileBuffer);
+    } catch (dbError) {
+      console.error("⚠️ تعذر تحميل قاعدة البيانات الحالية لأن الملف تالف أو فارغ:", dbError);
+      try {
+        const corruptBackup = `database_sqlite_corrupt_${Date.now()}`;
+        fs.renameSync(DB_PATH, corruptBackup);
+        console.log(`تم نقل الملف التالف وتسميته إلى: ${corruptBackup}`);
+      } catch (renameError) {
+        console.error("تعذر نقل الملف التالف:", renameError);
+      }
+      db = new SQL.Database();
+    }
   } else {
     db = new SQL.Database();
   }
@@ -287,14 +302,25 @@ async function startServer() {
   });
 
   app.post("/api/search", async (req, res) => {
-    const { query, bookNumber, issuer, docType } = req.body;
+    const { 
+      query, 
+      bookNumber, 
+      issuer, 
+      docType, 
+      employeeName, 
+      subject, 
+      secretNumber, 
+      rank, 
+      dateFrom, 
+      dateTo 
+    } = req.body;
     
     let sql = "SELECT * FROM documents WHERE 1=1";
     const params: any[] = [];
     
     if (query) {
-      sql += " AND (fileName LIKE ? OR extractedText LIKE ? OR subject LIKE ?)";
-      params.push(`%${query}%`, `%${query}%`, `%${query}%`);
+      sql += " AND (fileName LIKE ? OR extractedText LIKE ? OR subject LIKE ? OR employeeName LIKE ? OR keywords LIKE ?)";
+      params.push(`%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`, `%${query}%`);
     }
     if (bookNumber) {
       sql += " AND bookNumber LIKE ?";
@@ -304,11 +330,36 @@ async function startServer() {
       sql += " AND issuer LIKE ?";
       params.push(`%${issuer}%`);
     }
-    if (docType) {
+    if (docType && docType !== "الكل") {
       sql += " AND docType = ?";
       params.push(docType);
     }
+    if (employeeName) {
+      sql += " AND employeeName LIKE ?";
+      params.push(`%${employeeName}%`);
+    }
+    if (subject) {
+      sql += " AND subject LIKE ?";
+      params.push(`%${subject}%`);
+    }
+    if (secretNumber) {
+      sql += " AND secretNumber LIKE ?";
+      params.push(`%${secretNumber}%`);
+    }
+    if (rank) {
+      sql += " AND rank LIKE ?";
+      params.push(`%${rank}%`);
+    }
+    if (dateFrom) {
+      sql += " AND bookDate >= ?";
+      params.push(dateFrom);
+    }
+    if (dateTo) {
+      sql += " AND bookDate <= ?";
+      params.push(dateTo);
+    }
     
+    sql += " ORDER BY createdAt DESC";
     const results = getRows(sql, params);
     res.json(results);
   });
