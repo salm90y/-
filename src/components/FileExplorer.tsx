@@ -26,6 +26,7 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onView }) => {
   const [documents, setDocuments] = useState<Document[]>([]);
   const [loading, setLoading] = useState(true);
   const [searchQuery, setSearchQuery] = useState('');
+  const [docToDelete, setDocToDelete] = useState<Document | null>(null);
 
   useEffect(() => {
     fetchDocuments();
@@ -58,6 +59,22 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onView }) => {
       console.error(err);
     } finally {
       setLoading(false);
+    }
+  };
+
+  const handleDeleteConfirm = async () => {
+    if (!docToDelete) return;
+    try {
+      const res = await fetch(`/api/documents/${docToDelete.id}`, {
+        method: 'DELETE'
+      });
+      if (res.ok) {
+        fetchDocuments();
+      }
+    } catch (err) {
+      console.error(err);
+    } finally {
+      setDocToDelete(null);
     }
   };
 
@@ -145,11 +162,26 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onView }) => {
                       <button 
                         onClick={() => onView(doc)}
                         className="p-2 text-slate-400 hover:text-blue-600 hover:bg-blue-50 rounded-lg transition-colors"
+                        title="معاينة وتعديل"
                       >
                         <Eye size={18} />
                       </button>
-                      <button className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors">
+                      <a 
+                        href={`/${doc.filePath}`}
+                        download={doc.fileName}
+                        target="_blank"
+                        rel="noreferrer"
+                        className="p-2 text-slate-400 hover:text-slate-600 hover:bg-slate-100 rounded-lg transition-colors flex items-center justify-center"
+                        title="تحميل الملف"
+                      >
                         <Download size={18} />
+                      </a>
+                      <button 
+                        onClick={() => setDocToDelete(doc)}
+                        className="p-2 text-slate-400 hover:text-red-600 hover:bg-red-50 rounded-lg transition-colors"
+                        title="حذف المستند"
+                      >
+                        <Trash2 size={18} />
                       </button>
                     </div>
                   </td>
@@ -173,6 +205,32 @@ const FileExplorer: React.FC<FileExplorerProps> = ({ onView }) => {
           </button>
         </div>
       </div>
+
+      {/* Confirmation Modal */}
+      {docToDelete && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-slate-900/60 backdrop-blur-sm">
+          <div className="bg-white rounded-2xl max-w-md w-full p-6 shadow-2xl border border-slate-100 animate-in fade-in zoom-in-95 duration-150 text-right" dir="rtl">
+            <h3 className="text-lg font-black text-slate-800 mb-2">تأكيد حذف المستند</h3>
+            <p className="text-slate-500 text-sm mb-6 leading-relaxed">
+              هل أنت متأكد من رغبتك في حذف المستند <span className="font-bold text-slate-700">"{docToDelete.fileName}"</span> بشكل نهائي؟ لا يمكن التراجع عن هذا الإجراء وسيتم مسح كافة البيانات المؤرشفة.
+            </p>
+            <div className="flex gap-3 justify-end">
+              <button 
+                onClick={() => setDocToDelete(null)}
+                className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-600 rounded-xl font-bold transition-colors text-sm"
+              >
+                إلغاء
+              </button>
+              <button 
+                onClick={handleDeleteConfirm}
+                className="px-4 py-2 bg-red-600 hover:bg-red-700 text-white rounded-xl font-bold transition-colors text-sm shadow-lg shadow-red-200"
+              >
+                تأكيد الحذف
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
     </div>
   );
 };

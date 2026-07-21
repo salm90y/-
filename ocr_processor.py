@@ -37,6 +37,7 @@ def extract_fields_nlp(text):
         "issuer": "",
         "recipient": "",
         "subject": "",
+        "docContent": "",
         "secretNumber": "",
         "docType": "أخرى",
         "employeeName": "",
@@ -263,6 +264,95 @@ def extract_fields_nlp(text):
         k_words.extend(subject_parts[:2])
     
     fields["keywords"] = "، ".join(set(k_words))
+
+    # 12. Extract Book Content (مضمون الكتاب)
+    # Starts from the end of the subject until the end of the phrase "يرجى التفضل بالاطلاع" or similar
+    start_idx = 0
+    found_pattern = False
+    
+    # Try using search position of the subject in the original text
+    if fields["subject"]:
+        subj_pos = text.find(fields["subject"])
+        if subj_pos != -1:
+            start_idx = subj_pos + len(fields["subject"])
+            found_pattern = True
+            
+    if not found_pattern:
+        # Fallback: search for subject patterns to get end index
+        subject_patterns = [
+            r'(?:الموضوع|موضوع|العنوان)\s*[:/\-]\s*([^\n]+)',
+            r'\b(?:م\s*\/)\s*([^\n]+)'
+        ]
+        for pattern in subject_patterns:
+            match = re.search(pattern, text)
+            if match:
+                start_idx = match.end()
+                found_pattern = True
+                break
+                
+    if not found_pattern:
+        # Fallback: search for "الموضوع" word
+        pos = text.find("الموضوع")
+        if pos != -1:
+            start_idx = pos + 7
+            found_pattern = True
+        else:
+            pos_m = text.find("م/")
+            if pos_m != -1:
+                start_idx = pos_m + 2
+                found_pattern = True
+
+    if not found_pattern:
+        # If no subject is detected at all, start after the recipient or issuer
+        if fields["recipient"]:
+            rec_pos = text.find(fields["recipient"])
+            if rec_pos != -1:
+                start_idx = rec_pos + len(fields["recipient"])
+        elif fields["issuer"]:
+            iss_pos = text.find(fields["issuer"])
+            if iss_pos != -1:
+                start_idx = iss_pos + len(fields["issuer"])
+        else:
+            start_idx = len(text) // 4  # fallback 25% of text
+
+    # Search for "يرجى التفضل بالاطلاع" (with various spellings: يرجى, يرجى, التفضل, بالاطلاع)
+    content_text = text[start_idx:]
+    end_phrase_match = re.search(r'(?:يرجى|يرجا|يرجى|يرجا|يرجى)\s+(?:التفضل|التفضل|التفضل)\s+(?:بالاطلاع|بالأطلاع|بالاطلاع|بالأطلاع)', content_text)
+    
+    end_idx = len(text)
+    if end_phrase_match:
+        match_end = end_phrase_match.end()
+        # Find ending punctuation like dot or newline within the next 150 characters
+        post_text = content_text[match_end:]
+        sep_match = re.search(r'[.\n،,؛;]', post_text)
+        if sep_match:
+            end_idx = start_idx + match_end + sep_match.end()
+        else:
+            # If no separator found, let's take up to 80 chars after it
+            line_end = post_text.find('\n')
+            if line_end != -1:
+                end_idx = start_idx + match_end + line_end
+            else:
+                end_idx = start_idx + match_end + min(len(post_text), 80)
+    else:
+        # Fallback: check for "الاطلاع" or "الأطلاع" or "الموافقة" or "التفضل"
+        alt_match = re.search(r'الاطلاع|الأطلاع|الموافقة|التفضل', content_text)
+        if alt_match:
+            match_end = alt_match.end()
+            post_text = content_text[match_end:]
+            sep_match = re.search(r'[.\n،,؛;]', post_text)
+            if sep_match:
+                end_idx = start_idx + match_end + sep_match.end()
+            else:
+                end_idx = start_idx + match_end + min(len(post_text), 80)
+        else:
+            # Fallback if no matching phrase found: take up to 350 characters of text after the start
+            end_idx = start_idx + min(len(content_text), 350)
+            
+    doc_content = text[start_idx:end_idx].strip()
+    # Clean leading characters
+    doc_content = re.sub(r'^[:/\-\s]+', '', doc_content)
+    fields["docContent"] = doc_content.strip()
 
     return fields
 

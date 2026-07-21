@@ -18,6 +18,7 @@ export interface Document {
   issuer?: string;
   recipient?: string;
   subject?: string;
+  docContent?: string;
   secretNumber?: string;
   docType?: string; // penalty, retirement, etc.
   employeeName?: string;

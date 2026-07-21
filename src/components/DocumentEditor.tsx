@@ -144,6 +144,9 @@ const DocumentEditor: React.FC<DocumentEditorProps> = ({ document: initialDoc, o
                 <div className="col-span-2">
                   <Field label="عنوان الموضوع" name="subject" value={doc.subject} onChange={handleChange} />
                 </div>
+                <div className="col-span-2">
+                  <TextAreaField label="مضمون الكتاب" name="docContent" value={doc.docContent} onChange={handleChange} />
+                </div>
                 <Field label="رقم الكتاب" name="bookNumber" value={doc.bookNumber} onChange={handleChange} />
                 <div className="space-y-1.5">
                   <label className="text-[11px] font-black text-slate-400 uppercase tracking-widest">نوع الوثيقة</label>
@@ -197,6 +200,19 @@ const Field = ({ label, name, value, onChange }: { label: string, name: string, 
       value={value || ''}
       onChange={onChange}
       className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all shadow-sm"
+    />
+  </div>
+);
+
+const TextAreaField = ({ label, name, value, onChange }: { label: string, name: string, value: any, onChange: any }) => (
+  <div className="space-y-1.5">
+    <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest">{label}</label>
+    <textarea 
+      name={name}
+      value={value || ''}
+      onChange={onChange}
+      rows={4}
+      className="w-full bg-slate-50 border border-slate-200 rounded-xl px-4 py-2.5 text-sm font-bold focus:ring-4 focus:ring-blue-500/10 focus:border-blue-500 outline-none transition-all shadow-sm resize-y"
     />
   </div>
 );

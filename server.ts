@@ -75,6 +75,7 @@ async function startServer() {
       statisticalNumber TEXT,
       rank TEXT,
       qrCode TEXT,
+      docContent TEXT,
       createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
       updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
     );
@@ -120,6 +121,13 @@ async function startServer() {
       value TEXT
     );
   `);
+  
+  try {
+    db.run("ALTER TABLE documents ADD COLUMN docContent TEXT;");
+  } catch (err) {
+    // Ignore if column already exists
+  }
+  
   saveDb();
 
   function saveDb() {
@@ -219,7 +227,7 @@ async function startServer() {
     let ocrEngineUsed = "Tesseract (JS-Online)";
     let extractedData: any = {
       bookNumber: "", bookDate: "", issueDate: "", issuer: "",
-      recipient: "", subject: "", secretNumber: "", docType: "أخرى",
+      recipient: "", subject: "", docContent: "", secretNumber: "", docType: "أخرى",
       employeeName: "", keywords: "", statisticalNumber: "", rank: ""
     };
     let extractionEngineUsed = "Regex/Local (None)";
@@ -341,6 +349,96 @@ async function startServer() {
           const nameMatch = extractedText.match(/(?:الموظف|السيد|الموظفة|السيدة)\s*[:\/-]?\s*([أ-ي]{3,10}\s+[أ-ي]{3,10}(?:\s+[أ-ي]{3,10}){1,3})/);
           if (nameMatch) extractedData.employeeName = nameMatch[1].trim();
         }
+
+        if (!extractedData.docContent) {
+          let startIdx = 0;
+          let foundPattern = false;
+          const text = extractedText || "";
+          
+          if (extractedData.subject) {
+            const subjPos = text.indexOf(extractedData.subject);
+            if (subjPos !== -1) {
+              startIdx = subjPos + extractedData.subject.length;
+              foundPattern = true;
+            }
+          }
+          
+          if (!foundPattern) {
+            const subjectPatterns = [
+              /(?:الموضوع|موضوع|العنوان)\s*[:/\-]\s*([^\n]+)/,
+              /\b(?:م\s*\/)\s*([^\n]+)/
+            ];
+            for (const pattern of subjectPatterns) {
+              const match = text.match(pattern);
+              if (match) {
+                startIdx = (match.index || 0) + match[0].length;
+                foundPattern = true;
+                break;
+              }
+            }
+          }
+          
+          if (!foundPattern) {
+            const pos = text.indexOf("الموضوع");
+            if (pos !== -1) {
+              startIdx = pos + 7;
+              foundPattern = true;
+            } else {
+              const posM = text.indexOf("م/");
+              if (posM !== -1) {
+                startIdx = posM + 2;
+                foundPattern = true;
+              }
+            }
+          }
+          
+          if (!foundPattern) {
+            if (extractedData.recipient) {
+              const recPos = text.indexOf(extractedData.recipient);
+              if (recPos !== -1) startIdx = recPos + extractedData.recipient.length;
+            } else {
+              startIdx = Math.floor(text.length / 4);
+            }
+          }
+          
+          const contentText = text.substring(startIdx);
+          const endPhraseMatch = contentText.match(/(?:يرجى|يرجا|يرجى|يرجا|يرجى)\s+(?:التفضل|التفضل|التفضل)\s+(?:بالاطلاع|بالأطلاع|بالاطلاع|بالأطلاع)/);
+          
+          let endIdx = text.length;
+          if (endPhraseMatch) {
+            const matchEnd = (endPhraseMatch.index || 0) + endPhraseMatch[0].length;
+            const postText = contentText.substring(matchEnd);
+            const sepMatch = postText.match(/[.\n،,؛;]/);
+            if (sepMatch) {
+              endIdx = startIdx + matchEnd + (sepMatch.index || 0) + sepMatch[0].length;
+            } else {
+              const lineEnd = postText.indexOf('\n');
+              if (lineEnd !== -1) {
+                endIdx = startIdx + matchEnd + lineEnd;
+              } else {
+                endIdx = startIdx + matchEnd + Math.min(postText.length, 80);
+              }
+            }
+          } else {
+            const altMatch = contentText.match(/الاطلاع|الأطلاع|الموافقة|التفضل/);
+            if (altMatch) {
+              const matchEnd = (altMatch.index || 0) + altMatch[0].length;
+              const postText = contentText.substring(matchEnd);
+              const sepMatch = postText.match(/[.\n،,؛;]/);
+              if (sepMatch) {
+                endIdx = startIdx + matchEnd + (sepMatch.index || 0) + sepMatch[0].length;
+              } else {
+                endIdx = startIdx + matchEnd + Math.min(postText.length, 80);
+              }
+            } else {
+              endIdx = startIdx + Math.min(contentText.length, 350);
+            }
+          }
+          
+          let docContent = text.substring(startIdx, endIdx).trim();
+          docContent = docContent.replace(/^[:/\-\s]+/, '');
+          extractedData.docContent = docContent;
+        }
       }
 
       // 3. Generate QR Code
@@ -358,15 +456,15 @@ async function startServer() {
           fileName, filePath, fileType, fileSize, extractedText,
           bookNumber, bookDate, issueDate, issuer, recipient,
           subject, secretNumber, docType, employeeName, keywords,
-          statisticalNumber, rank, qrCode
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+          statisticalNumber, rank, qrCode, docContent
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       `, [
         file.originalname, file.path, file.mimetype, file.size, extractedText,
         extractedData.bookNumber || "", extractedData.bookDate || "", extractedData.issueDate || "",
         extractedData.issuer || "", extractedData.recipient || "", extractedData.subject || "",
         extractedData.secretNumber || "", extractedData.docType || "أخرى", extractedData.employeeName || "",
         extractedData.keywords || "", extractedData.statisticalNumber || "", extractedData.rank || "",
-        qrCode
+        qrCode, extractedData.docContent || ""
       ]);
       saveDb();
 
@@ -388,13 +486,13 @@ async function startServer() {
     db.run(`
       UPDATE documents SET
         bookNumber = ?, bookDate = ?, issueDate = ?, issuer = ?,
-        recipient = ?, subject = ?, secretNumber = ?, docType = ?,
+        recipient = ?, subject = ?, docContent = ?, secretNumber = ?, docType = ?,
         employeeName = ?, keywords = ?, statisticalNumber = ?, rank = ?,
         updatedAt = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [
       data.bookNumber, data.bookDate, data.issueDate, data.issuer,
-      data.recipient, data.subject, data.secretNumber, data.docType,
+      data.recipient, data.subject, data.docContent, data.secretNumber, data.docType,
       data.employeeName, data.keywords, data.statisticalNumber, data.rank,
       id
     ]);
