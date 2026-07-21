@@ -8,6 +8,10 @@
   --accent: #2563eb;
 }
 
+* {
+  font-family: 'Cairo', 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif !important;
+}
+
 body {
   direction: rtl;
   @apply bg-[#f8fafc] text-[#1e293b] antialiased;

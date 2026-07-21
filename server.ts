@@ -15,8 +15,14 @@ import initSqlJs from "sql.js";
 
 const app = express();
 const PORT = 3000;
-const upload = multer({ dest: "uploads/" });
 const DB_PATH = "database.sqlite";
+
+// Ensure uploads directory exists
+if (!fs.existsSync("uploads")) {
+  fs.mkdirSync("uploads", { recursive: true });
+}
+
+const upload = multer({ dest: "uploads/" });
 
 // Initialize Gemini
 const ai = new GoogleGenAI({
@@ -38,41 +44,76 @@ async function startServer() {
     db = new SQL.Database(fileBuffer);
   } else {
     db = new SQL.Database();
-    db.run(`
-      CREATE TABLE IF NOT EXISTS documents (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        fileName TEXT,
-        filePath TEXT,
-        fileType TEXT,
-        fileSize INTEGER,
-        extractedText TEXT,
-        bookNumber TEXT,
-        bookDate TEXT,
-        issueDate TEXT,
-        issuer TEXT,
-        recipient TEXT,
-        subject TEXT,
-        secretNumber TEXT,
-        docType TEXT,
-        employeeName TEXT,
-        keywords TEXT,
-        statisticalNumber TEXT,
-        rank TEXT,
-        qrCode TEXT,
-        createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
-        updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
-      );
-
-      CREATE TABLE IF NOT EXISTS document_links (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        sourceId INTEGER,
-        targetId INTEGER,
-        FOREIGN KEY(sourceId) REFERENCES documents(id),
-        FOREIGN KEY(targetId) REFERENCES documents(id)
-      );
-    `);
-    saveDb();
   }
+
+  // Ensure all tables are created
+  db.run(`
+    CREATE TABLE IF NOT EXISTS documents (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fileName TEXT,
+      filePath TEXT,
+      fileType TEXT,
+      fileSize INTEGER,
+      extractedText TEXT,
+      bookNumber TEXT,
+      bookDate TEXT,
+      issueDate TEXT,
+      issuer TEXT,
+      recipient TEXT,
+      subject TEXT,
+      secretNumber TEXT,
+      docType TEXT,
+      employeeName TEXT,
+      keywords TEXT,
+      statisticalNumber TEXT,
+      rank TEXT,
+      qrCode TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP,
+      updatedAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS document_links (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      sourceId INTEGER,
+      targetId INTEGER,
+      FOREIGN KEY(sourceId) REFERENCES documents(id),
+      FOREIGN KEY(targetId) REFERENCES documents(id)
+    );
+
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT UNIQUE,
+      fullname TEXT,
+      role TEXT,
+      password TEXT,
+      status TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS audit_logs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      username TEXT,
+      action TEXT,
+      details TEXT,
+      timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS backups (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      fileName TEXT,
+      fileSize TEXT,
+      type TEXT,
+      status TEXT,
+      createdAt DATETIME DEFAULT CURRENT_TIMESTAMP
+    );
+
+    CREATE TABLE IF NOT EXISTS settings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      key TEXT UNIQUE,
+      value TEXT
+    );
+  `);
+  saveDb();
 
   function saveDb() {
     const data = db.export();
@@ -97,6 +138,22 @@ async function startServer() {
     return rows.length > 0 ? rows[0] : null;
   }
 
+  // Seed default values if empty
+  try {
+    const adminCheck = getRow("SELECT * FROM users WHERE id = 1");
+    if (!adminCheck) {
+      db.run("INSERT INTO users (id, username, fullname, role, password, status) VALUES (?, ?, ?, ?, ?, ?)", [
+        1, 'admin', 'مدير النظام الرئيسي', 'admin', 'admin123', 'نشط'
+      ]);
+      db.run("INSERT INTO audit_logs (username, action, details) VALUES (?, ?, ?)", [
+        'system', 'تهيئة النظام', 'تم تهيئة نظام الأرشفة وقاعدة البيانات للمرة الأولى بنجاح.'
+      ]);
+      saveDb();
+    }
+  } catch (err) {
+    console.error("Seeding failed:", err);
+  }
+
   app.use(express.json());
 
   // API Routes
@@ -118,10 +175,15 @@ async function startServer() {
     let extractedText = "";
 
     try {
-      // 1. OCR (Basic implementation for images)
+      // 1. OCR (Basic implementation for images) - Wrapped in try-catch to allow local offline execution
       if (file.mimetype.startsWith("image/")) {
-        const { data: { text } } = await Tesseract.recognize(file.path, 'ara');
-        extractedText = text;
+        try {
+          const { data: { text } } = await Tesseract.recognize(file.path, 'ara');
+          extractedText = text;
+        } catch (ocrError) {
+          console.error("Tesseract OCR failed (probably offline):", ocrError);
+          extractedText = `تم رفع الصورة محلياً بنجاح. تعذر استخراج النص تلقائياً لعدم وجود اتصال بالإنترنت لتحميل ملفات Tesseract. اسم الملف: ${file.originalname}`;
+        }
       } else {
         extractedText = "تم رفع ملف: " + file.originalname;
       }
@@ -135,17 +197,24 @@ async function startServer() {
 
       if (process.env.GEMINI_API_KEY && process.env.GEMINI_API_KEY !== "MY_GEMINI_API_KEY") {
         try {
-          const model = ai.getGenerativeModel({ model: "gemini-1.5-flash" });
           const prompt = `
             استخرج البيانات التالية من النص باللغة العربية بصيغة JSON فقط:
             (bookNumber, bookDate, issueDate, issuer, recipient, subject, secretNumber, docType, employeeName, keywords, statisticalNumber, rank)
             النص: ${extractedText}
           `;
-          const result = await model.generateContent(prompt);
-          const aiData = JSON.parse(result.response.text().replace(/```json|```/g, ""));
-          extractedData = { ...extractedData, ...aiData };
+          const result = await ai.models.generateContent({
+            model: "gemini-3.6-flash",
+            contents: prompt,
+            config: {
+              responseMimeType: "application/json"
+            }
+          });
+          if (result.text) {
+            const aiData = JSON.parse(result.text.replace(/```json|```/g, ""));
+            extractedData = { ...extractedData, ...aiData };
+          }
         } catch (e) {
-          console.log("AI Extraction failed, falling back to local parsing");
+          console.log("AI Extraction failed, falling back to local parsing:", e);
         }
       }
 
@@ -160,8 +229,13 @@ async function startServer() {
       }
 
       // 3. Generate QR Code
-      const qrData = JSON.stringify({ name: file.originalname, date: new Date().toISOString() });
-      const qrCode = await QRCode.toDataURL(qrData);
+      let qrCode = "";
+      try {
+        const qrData = JSON.stringify({ name: file.originalname, date: new Date().toISOString() });
+        qrCode = await QRCode.toDataURL(qrData);
+      } catch (qrError) {
+        console.error("QR Code generation failed:", qrError);
+      }
 
       // 4. Save to DB
       db.run(`
@@ -181,11 +255,12 @@ async function startServer() {
       ]);
       saveDb();
 
-      const lastId = getRow("SELECT last_insert_rowid() as id").id;
+      const lastIdRow = getRow("SELECT last_insert_rowid() as id");
+      const lastId = lastIdRow ? lastIdRow.id : 1;
       res.json({ id: lastId, ...extractedData, qrCode });
-    } catch (error) {
+    } catch (error: any) {
       console.error(error);
-      res.status(500).json({ error: "Failed to process document" });
+      res.status(500).json({ error: error.message || "Failed to process document" });
     }
   });
 
@@ -244,10 +319,210 @@ async function startServer() {
     const recent = getRows("SELECT * FROM documents ORDER BY createdAt DESC LIMIT 5");
     
     res.json({
-      total: total.count,
+      total: total ? total.count : 0,
       byType,
       recent
     });
+  });
+
+  // Delete document
+  app.delete("/api/documents/:id", async (req, res) => {
+    const id = req.params.id;
+    const doc = getRow("SELECT * FROM documents WHERE id = ?", [id]);
+    if (doc) {
+      db.run("DELETE FROM documents WHERE id = ?", [id]);
+      db.run("DELETE FROM document_links WHERE sourceId = ? OR targetId = ?", [id, id]);
+      saveDb();
+      
+      db.run("INSERT INTO audit_logs (username, action, details) VALUES (?, ?, ?)", [
+        "admin", "حذف مستند", `تم حذف المستند: ${doc.fileName} نهائياً.`
+      ]);
+      saveDb();
+
+      try {
+        if (doc.filePath && fs.existsSync(doc.filePath)) {
+          fs.unlinkSync(doc.filePath);
+        }
+      } catch (err) {
+        console.error("Physical file deletion failed:", err);
+      }
+    }
+    res.json({ success: true });
+  });
+
+  // Users Management
+  app.get("/api/users", async (req, res) => {
+    const users = getRows("SELECT id, username, fullname, role, status, createdAt FROM users ORDER BY id ASC");
+    res.json(users);
+  });
+
+  app.post("/api/users", async (req, res) => {
+    const { username, fullname, role, password } = req.body;
+    try {
+      db.run("INSERT INTO users (username, fullname, role, password, status) VALUES (?, ?, ?, ?, 'نشط')", [
+        username, fullname, role, password
+      ]);
+      saveDb();
+
+      db.run("INSERT INTO audit_logs (username, action, details) VALUES (?, ?, ?)", [
+        "admin", "إضافة مستخدم", `تم إنشاء حساب للموظف: ${fullname} بدور (${role}).`
+      ]);
+      saveDb();
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to create user" });
+    }
+  });
+
+  app.delete("/api/users/:id", async (req, res) => {
+    const id = req.params.id;
+    if (id === "1") {
+      return res.status(400).json({ error: "Cannot delete main admin account" });
+    }
+    
+    const user = getRow("SELECT * FROM users WHERE id = ?", [id]);
+    if (user) {
+      db.run("DELETE FROM users WHERE id = ?", [id]);
+      saveDb();
+
+      db.run("INSERT INTO audit_logs (username, action, details) VALUES (?, ?, ?)", [
+        "admin", "إلغاء مستخدم", `تم إزالة حساب الموظف: ${user.fullname} من النظام.`
+      ]);
+      saveDb();
+    }
+    res.json({ success: true });
+  });
+
+  // Audit Logs
+  app.get("/api/audit-logs", async (req, res) => {
+    const logs = getRows("SELECT * FROM audit_logs ORDER BY timestamp DESC LIMIT 50");
+    res.json(logs);
+  });
+
+  // Backups Management
+  app.get("/api/backups", async (req, res) => {
+    const list = getRows("SELECT * FROM backups ORDER BY createdAt DESC");
+    res.json(list);
+  });
+
+  app.post("/api/backups", async (req, res) => {
+    try {
+      const backupsDir = "backups";
+      if (!fs.existsSync(backupsDir)) {
+         fs.mkdirSync(backupsDir, { recursive: true });
+      }
+
+      const timestamp = new Date().toISOString().replace(/T.*/, '').replace(/-/g, '_');
+      const rand = Math.floor(Math.random() * 1000);
+      const backupFileName = `archive_backup_manual_${timestamp}_${rand}.sqlite`;
+      const backupFilePath = path.join(backupsDir, backupFileName);
+
+      fs.copyFileSync(DB_PATH, backupFilePath);
+
+      const sizeBytes = fs.statSync(backupFilePath).size;
+      const sizeStr = (sizeBytes / (1024 * 1024)).toFixed(2) + " MB";
+
+      db.run("INSERT INTO backups (fileName, fileSize, type, status) VALUES (?, ?, 'يدوي', 'ناجح')", [
+        backupFileName, sizeStr
+      ]);
+      saveDb();
+
+      db.run("INSERT INTO audit_logs (username, action, details) VALUES (?, ?, ?)", [
+        "admin", "إنشاء نسخة احتياطية", `تم حفظ نسخة احتياطية يدوية باسم: ${backupFileName}`
+      ]);
+      saveDb();
+
+      const row = getRow("SELECT * FROM backups ORDER BY id DESC LIMIT 1");
+      res.json(row);
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to create backup" });
+    }
+  });
+
+  app.delete("/api/backups/:id", async (req, res) => {
+    const id = req.params.id;
+    const backup = getRow("SELECT * FROM backups WHERE id = ?", [id]);
+    if (backup) {
+      db.run("DELETE FROM backups WHERE id = ?", [id]);
+      saveDb();
+
+      try {
+        const backupFilePath = path.join("backups", backup.fileName);
+        if (fs.existsSync(backupFilePath)) {
+          fs.unlinkSync(backupFilePath);
+        }
+      } catch (err) {
+        console.error(err);
+      }
+
+      db.run("INSERT INTO audit_logs (username, action, details) VALUES (?, ?, ?)", [
+        "admin", "حذف نسخة احتياطية", `تم حذف ملف النسخة الاحتياطية: ${backup.fileName}`
+      ]);
+      saveDb();
+    }
+    res.json({ success: true });
+  });
+
+  // Download DB
+  app.get("/api/backup/download", async (req, res) => {
+    if (fs.existsSync(DB_PATH)) {
+      res.download(DB_PATH, "archive_database.sqlite");
+    } else {
+      res.status(404).send("Database file not found");
+    }
+  });
+
+  // Restore DB
+  app.post("/api/backup/restore", upload.single("backup"), async (req, res) => {
+    const file = req.file;
+    if (!file) return res.status(400).json({ error: "No file provided" });
+
+    try {
+      const fileBuffer = fs.readFileSync(file.path);
+      db = new SQL.Database(fileBuffer);
+      saveDb();
+
+      try { fs.unlinkSync(file.path); } catch (e) {}
+
+      db.run("INSERT INTO audit_logs (username, action, details) VALUES (?, ?, ?)", [
+        "admin", "استرجاع الأرشيف", "تم استيراد واسترجاع قاعدة بيانات الأرشيف بالكامل بنجاح من ملف خارجي."
+      ]);
+      saveDb();
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to restore backup" });
+    }
+  });
+
+  // Settings Config
+  app.get("/api/settings", async (req, res) => {
+    const rows = getRows("SELECT * FROM settings");
+    const config: Record<string, string> = {};
+    rows.forEach(r => {
+      config[r.key] = r.value;
+    });
+    res.json(config);
+  });
+
+  app.post("/api/settings", async (req, res) => {
+    const data = req.body;
+    try {
+      Object.entries(data).forEach(([k, v]) => {
+        db.run("INSERT OR REPLACE INTO settings (key, value) VALUES (?, ?)", [k, String(v)]);
+      });
+      saveDb();
+
+      db.run("INSERT INTO audit_logs (username, action, details) VALUES (?, ?, ?)", [
+        "admin", "تعديل الإعدادات", "تم تحديث إعدادات النظام وتخصيص هوية المؤسسة والشبكة."
+      ]);
+      saveDb();
+
+      res.json({ success: true });
+    } catch (err: any) {
+      res.status(500).json({ error: err.message || "Failed to save settings" });
+    }
   });
 
   // Serve static uploads

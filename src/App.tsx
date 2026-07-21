@@ -9,6 +9,9 @@ import Dashboard from './components/Dashboard';
 import FileExplorer from './components/FileExplorer';
 import UploadModal from './components/UploadModal';
 import DocumentEditor from './components/DocumentEditor';
+import Permissions from './components/Permissions';
+import Backup from './components/Backup';
+import Settings from './components/Settings';
 import { Document } from './types';
 import { AnimatePresence, motion } from 'motion/react';
 
@@ -42,6 +45,12 @@ export default function App() {
         return <FileExplorer onView={(doc) => setSelectedDoc(doc)} />;
       case 'search':
         return <FileExplorer onView={(doc) => setSelectedDoc(doc)} />; // Reusing explorer with search active
+      case 'permissions':
+        return <Permissions />;
+      case 'backup':
+        return <Backup />;
+      case 'settings':
+        return <Settings />;
       case 'upload':
         // The sidebar button opens the modal, so we just return dashboard here or a landing
         return <Dashboard />;
