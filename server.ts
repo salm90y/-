@@ -12,10 +12,31 @@ import QRCode from "qrcode";
 import fs from "fs";
 import initSqlJs from "sql.js";
 import { exec } from "child_process";
+import { GoogleGenAI } from "@google/genai";
 
 const app = express();
 const PORT = 3000;
 const DB_PATH = "database.sqlite";
+
+// Initialize Gemini AI Client for high-accuracy cloud extraction
+let aiClient: any = null;
+if (process.env.GEMINI_API_KEY) {
+  try {
+    aiClient = new GoogleGenAI({
+      apiKey: process.env.GEMINI_API_KEY,
+      httpOptions: {
+        headers: {
+          'User-Agent': 'aistudio-build',
+        }
+      }
+    });
+    console.log("[Gemini AI] Initialized successfully with User-Agent: aistudio-build");
+  } catch (err: any) {
+    console.error("[Gemini AI] Failed to initialize GoogleGenAI client:", err.message);
+  }
+} else {
+  console.warn("[Gemini AI] GEMINI_API_KEY env variable is not set. Cloud extraction will not be available.");
+}
 
 // Ensure uploads directory exists
 if (!fs.existsSync("uploads")) {
@@ -223,6 +244,7 @@ async function startServer() {
     if (!req.file) return res.status(400).json({ error: "No file uploaded" });
 
     const file = req.file;
+    const useGemini = req.query.useGemini === "true";
     let extractedText = "";
     let ocrEngineUsed = "Tesseract (JS-Online)";
     let extractedData: any = {
@@ -231,137 +253,222 @@ async function startServer() {
       employeeName: "", keywords: "", statisticalNumber: "", rank: ""
     };
     let extractionEngineUsed = "Regex/Local (None)";
+    let extractionSuccess = false;
 
     try {
-      // 1. Try Python-based Offline AI Extractor First (Covers PaddleOCR, EasyOCR, PyPDF, and advanced NLP parsing)
-      try {
-        console.log(`[Offline AI] Running Offline AI Extractor for ${file.originalname}...`);
-        const result = await runPythonExtractor(file.path);
-        extractedText = result.text;
-        ocrEngineUsed = result.ocr_engine;
-        
-        if (result.fields) {
-          extractedData = { ...extractedData, ...result.fields };
-          extractionEngineUsed = "Offline Python AI (Advanced NLP & Heuristics)";
-        }
-        console.log(`[Offline AI] Offline Python Extractor successful. Engine: ${ocrEngineUsed}`);
-      } catch (pythonOcrError: any) {
-        console.warn("[Offline AI] Offline Python Extractor failed or missing libraries. Falling back to JS Tesseract & LLM. Error:", pythonOcrError.message);
-        
-        // Fallback to Tesseract.js (already installed) for text extraction
-        if (file.mimetype.startsWith("image/")) {
-          try {
-            const localLangPath = path.join(process.cwd(), "tessdata");
-            const { data: { text } } = await Tesseract.recognize(file.path, 'ara+eng', {
-              langPath: localLangPath,
-              gzip: false
-            });
-            extractedText = text;
-            ocrEngineUsed = "Tesseract (JS-Fallback)";
-          } catch (ocrError) {
-            console.error("Tesseract OCR failed:", ocrError);
-            extractedText = `تم رفع الملف محلياً بنجاح. تعذر استخراج النص لعدم تثبيت مكتبات الذكاء الاصطناعي EasyOCR أو ملفات Tesseract. اسم الملف: ${file.originalname}`;
-          }
-        } else {
-          extractedText = "تم رفع ملف: " + file.originalname;
-        }
-
-        // Run Local Ollama if Python extractor failed
-        let ollamaSuccess = false;
+      // 1. Try Cloud-based Gemini AI first if requested and client is initialized
+      if (useGemini && aiClient) {
         try {
-          console.log("[Offline AI] Checking if local Ollama service is active on http://localhost:11434...");
-          const ollamaCheck = await fetch("http://localhost:11434/api/tags");
-          if (ollamaCheck.ok) {
-            const tagsData: any = await ollamaCheck.json();
-            const modelsList = tagsData.models || [];
-            
-            if (modelsList.length > 0) {
-              let selectedModel = modelsList[0].name;
-              const preferred = modelsList.find((m: any) => m.name.includes("qwen") || m.name.includes("llama") || m.name.includes("ar"));
-              if (preferred) selectedModel = preferred.name;
-              
-              console.log(`[Offline AI] Local Ollama is ACTIVE! Selected local model for extraction: ${selectedModel}`);
-              const prompt = `
-                أنت نظام ذكاء اصطناعي محترف متخصص في تصنيف وأرشفة الوثائق والكتب الرسمية باللغة العربية.
-                قم بتحليل النص الممسوح ضوئياً أدناه، واستخرج جميع الحقول المطلوبة بدقة شديدة ثم أرجعها بصيغة كائن JSON نظيف فقط بدون أي شرح أو علامات ماركداون (لا تضع \`\`\`json في البداية).
-                
-                الحقول المطلوبة في الـ JSON:
-                {
-                  "bookNumber": "رقم الكتاب الرسمي أو العدد المكتوب في أعلى الكتاب",
-                  "bookDate": "تاريخ الكتاب الرسمي بصيغة YYYY-MM-DD أو كما هو مكتوب",
-                  "issuer": "الجهة الحكومية أو الدائرة المصدرة للكتاب",
-                  "recipient": "الجهة الموجه إليها الكتاب (المستلم)",
-                  "subject": "موضوع ومضمون الكتاب بدقة فائقة وبشكل كامل",
-                  "secretNumber": "رقم الكتاب السري أو رمز السرية إن وجد (مثل سري/55)",
-                  "docType": "تصنيف نوع المستند ويجب أن يكون أحد التصنيفات التالية فقط: (عقوبة، تقاعد، انفكاك، نقل، الحاق، التحاق، وفاة، اجازة، سحب يد، ترقية، علاوة، أخرى)",
-                  "employeeName": "الاسم الثلاثي أو الرباعي الكامل للموظف المعني بالكتاب أو المذكور كطرف أساسي",
-                  "keywords": "كلمات دلالية مناسبة مفصولة بفواصل",
-                  "statisticalNumber": "الرقم الإحصائي أو الرقم الوظيفي للموظف إن وجد",
-                  "rank": "الدرجة الوظيفية، الرتبة، أو العنوان الوظيفي للموظف"
+          console.log(`[Gemini AI] Starting Cloud AI Multimodal processing for ${file.originalname}...`);
+          const fileData = fs.readFileSync(file.path);
+          const base64Data = fileData.toString("base64");
+          
+          let mimeType = file.mimetype;
+          if (file.originalname.toLowerCase().endsWith('.pdf')) {
+            mimeType = "application/pdf";
+          } else if (file.originalname.toLowerCase().endsWith('.png')) {
+            mimeType = "image/png";
+          } else if (file.originalname.toLowerCase().endsWith('.jpg') || file.originalname.toLowerCase().endsWith('.jpeg')) {
+            mimeType = "image/jpeg";
+          } else if (file.originalname.toLowerCase().endsWith('.webp')) {
+            mimeType = "image/webp";
+          }
+
+          const response = await aiClient.models.generateContent({
+            model: "gemini-3.6-flash",
+            contents: [
+              {
+                inlineData: {
+                  mimeType: mimeType,
+                  data: base64Data
                 }
+              },
+              {
+                text: `أنت نظام ذكاء اصطناعي محترف ومسؤول عن أرشفة وتصنيف الكتب والوثائق الرسمية باللغة العربية بدقة متناهية 100%.
+قم بقراءة وتحليل الملف الممسوح ضوئياً واستخراج الحقول التالية بدقة متناهية وتقديم النتيجة ككائن JSON نظيف يطابق هذا الهيكل تماماً:
+{
+  "bookNumber": "رقم الكتاب الرسمي أو العدد المكتوب في أعلى الكتاب (مثل: ق/٢/٥٥٤، عدد سري/55)",
+  "bookDate": "تاريخ الكتاب الرسمي بصيغة YYYY-MM-DD أو كما هو مكتوب",
+  "issuer": "الجهة الحكومية أو الدائرة المصدرة للكتاب بدقة (مثل: وزارة التربية)",
+  "recipient": "الجهة الموجه إليها الكتاب (المستلم)",
+  "subject": "عنوان وموضوع الكتاب بدقة كاملة وبشكل كامل",
+  "docContent": "مضمون ونص الكتاب الفعلي (الرسالة أو المتن). ابدأ من نهاية عنوان الموضوع وحتى نهاية جملة 'يرجى التفضل بالاطلاع' أو 'للتفضل بالاطلاع والعمل بموجبه' أو الجملة الختامية المشابهة. لا تقم بالتلخيص، واجلب النص كاملاً كما هو.",
+  "secretNumber": "الرقم السري للكتاب إن وجد",
+  "docType": "نوع وتصنيف المستند، ويجب أن يكون أحد التصنيفات التالية فقط: (عقوبة، تقاعد، انفكاك، نقل، الحاق، التحاق، وفاة، اجازة، سحب يد، ترقية، علاوة، أخرى)",
+  "employeeName": "الاسم الثلاثي أو الرباعي للموظف أو الشخص المعني بالكتاب المذكور كطرف أساسي",
+  "keywords": "كلمات دلالية مناسبة مفصولة بفاصلة أو '،'",
+  "statisticalNumber": "الرقم الإحصائي أو الرقم الوظيفي للموظف إن وجد",
+  "rank": "العنوان الوظيفي أو الرتبة أو الدرجة المذكورة للموظف",
+  "text": "كامل النص المستخرج حرفياً من الوثيقة لمطابقته وفهرسته"
+}`
+              }
+            ],
+            config: {
+              responseMimeType: "application/json"
+            }
+          });
 
-                النص الممسوح ضوئياً:
-                "${extractedText}"
+          const resultText = response.text;
+          if (resultText) {
+            const parsed = JSON.parse(resultText);
+            extractedText = parsed.text || "تم الاستخراج بنجاح";
+            ocrEngineUsed = "Gemini 3.6 Flash (Super High Accuracy Cloud AI)";
+            
+            extractedData = {
+              bookNumber: parsed.bookNumber || "",
+              bookDate: parsed.bookDate || "",
+              issueDate: parsed.bookDate || "",
+              issuer: parsed.issuer || "",
+              recipient: parsed.recipient || "",
+              subject: parsed.subject || "",
+              docContent: parsed.docContent || "",
+              secretNumber: parsed.secretNumber || "",
+              docType: parsed.docType || "أخرى",
+              employeeName: parsed.employeeName || "",
+              keywords: parsed.keywords || "",
+              statisticalNumber: parsed.statisticalNumber || "",
+              rank: parsed.rank || ""
+            };
+            extractionEngineUsed = "Gemini 3.6 Flash (Cloud Structured AI)";
+            extractionSuccess = true;
+            console.log(`[Gemini AI] Structured extraction completed successfully with Gemini 3.6 Flash!`);
+          }
+        } catch (geminiError: any) {
+          console.error("[Gemini AI] Processing failed, falling back to local extractor. Error:", geminiError.message);
+        }
+      }
 
-                ملاحظة مهمة: أرجع كائن JSON صالح ومكتمل فقط.
-              `;
-
-              const ollamaRes = await fetch("http://localhost:11434/api/generate", {
-                method: "POST",
-                headers: { "Content-Type": "application/json" },
-                body: JSON.stringify({
-                  model: selectedModel,
-                  prompt: prompt,
-                  stream: false,
-                  options: { temperature: 0.1 }
-                })
+      // 2. Try Python-based Offline AI Extractor if Gemini was not used or failed
+      if (!extractionSuccess) {
+        try {
+          console.log(`[Offline AI] Running Offline AI Extractor for ${file.originalname}...`);
+          const result = await runPythonExtractor(file.path);
+          extractedText = result.text;
+          ocrEngineUsed = result.ocr_engine;
+          
+          if (result.fields) {
+            extractedData = { ...extractedData, ...result.fields };
+            extractionEngineUsed = "Offline Python AI (Advanced NLP & Heuristics)";
+          }
+          console.log(`[Offline AI] Offline Python Extractor successful. Engine: ${ocrEngineUsed}`);
+          extractionSuccess = true;
+        } catch (pythonOcrError: any) {
+          console.warn("[Offline AI] Offline Python Extractor failed or missing libraries. Falling back to JS Tesseract & LLM. Error:", pythonOcrError.message);
+          
+          // Fallback to Tesseract.js (already installed) for text extraction
+          if (file.mimetype.startsWith("image/")) {
+            try {
+              const localLangPath = path.join(process.cwd(), "tessdata");
+              const { data: { text } } = await Tesseract.recognize(file.path, 'ara+eng', {
+                langPath: localLangPath,
+                gzip: false
               });
+              extractedText = text;
+              ocrEngineUsed = "Tesseract (JS-Fallback)";
+            } catch (ocrError) {
+              console.error("Tesseract OCR failed:", ocrError);
+              extractedText = `تم رفع الملف محلياً بنجاح. تعذر استخراج النص لعدم تثبيت مكتبات الذكاء الاصطناعي EasyOCR أو ملفات Tesseract. اسم الملف: ${file.originalname}`;
+            }
+          } else {
+            extractedText = "تم رفع ملف: " + file.originalname;
+          }
 
-              if (ollamaRes.ok) {
-                const resJson: any = await ollamaRes.json();
-                const cleanJsonText = resJson.response.replace(/```json|```/gi, "").trim();
-                const aiData = JSON.parse(cleanJsonText);
-                extractedData = { ...extractedData, ...aiData };
-                extractionEngineUsed = `Ollama - ${selectedModel} (Offline Local AI)`;
-                ollamaSuccess = true;
+          // Run Local Ollama if Python extractor failed
+          let ollamaSuccess = false;
+          try {
+            console.log("[Offline AI] Checking if local Ollama service is active on http://localhost:11434...");
+            const ollamaCheck = await fetch("http://localhost:11434/api/tags");
+            if (ollamaCheck.ok) {
+              const tagsData: any = await ollamaCheck.json();
+              const modelsList = tagsData.models || [];
+              
+              if (modelsList.length > 0) {
+                let selectedModel = modelsList[0].name;
+                const preferred = modelsList.find((m: any) => m.name.includes("qwen") || m.name.includes("llama") || m.name.includes("ar"));
+                if (preferred) selectedModel = preferred.name;
+                
+                console.log(`[Offline AI] Local Ollama is ACTIVE! Selected local model for extraction: ${selectedModel}`);
+                const prompt = `
+                  أنت نظام ذكاء اصطناعي محترف متخصص في تصنيف وأرشفة الوثائق والكتب الرسمية باللغة العربية.
+                  قم بتحليل النص الممسوح ضوئياً أدناه، واستخرج جميع الحقول المطلوبة بدقة شديدة ثم أرجعها بصيغة كائن JSON نظيف فقط بدون أي شرح أو علامات ماركداون (لا تضع \`\`\`json في البداية).
+                  
+                  الحقول المطلوبة في الـ JSON:
+                  {
+                    "bookNumber": "رقم الكتاب الرسمي أو العدد المكتوب في أعلى الكتاب",
+                    "bookDate": "تاريخ الكتاب الرسمي بصيغة YYYY-MM-DD أو كما هو مكتوب",
+                    "issuer": "الجهة الحكومية أو الدائرة المصدرة للكتاب",
+                    "recipient": "الجهة الموجه إليها الكتاب (المستلم)",
+                    "subject": "موضوع ومضمون الكتاب بدقة فائقة وبشكل كامل",
+                    "secretNumber": "رقم الكتاب السري أو رمز السرية إن وجد (مثل سري/55)",
+                    "docType": "تصنيف نوع المستند ويجب أن يكون أحد التصنيفات التالية فقط: (عقوبة، تقاعد، انفكاك، نقل، الحاق، التحاق، وفاة، اجازة، سحب يد، ترقية، علاوة، أخرى)",
+                    "employeeName": "الاسم الثلاثي أو الرباعي الكامل للموظف المعني بالكتاب أو المذكور كطرف أساسي",
+                    "keywords": "كلمات دلالية مناسبة مفصولة بفواصل",
+                    "statisticalNumber": "الرقم الإحصائي أو الرقم الوظيفي للموظف إن وجد",
+                    "rank": "الدرجة الوظيفية، الرتبة، أو العنوان الوظيفي للموظف"
+                  }
+
+                  النص الممسوح ضوئياً:
+                  "${extractedText}"
+
+                  ملاحظة مهمة: أرجع كائن JSON صالح ومكتمل فقط.
+                `;
+
+                const ollamaRes = await fetch("http://localhost:11434/api/generate", {
+                  method: "POST",
+                  headers: { "Content-Type": "application/json" },
+                  body: JSON.stringify({
+                    model: selectedModel,
+                    prompt: prompt,
+                    stream: false,
+                    options: { temperature: 0.1 }
+                  })
+                });
+
+                if (ollamaRes.ok) {
+                  const resJson: any = await ollamaRes.json();
+                  const cleanJsonText = resJson.response.replace(/```json|```/gi, "").trim();
+                  const aiData = JSON.parse(cleanJsonText);
+                  extractedData = { ...extractedData, ...aiData };
+                  extractionEngineUsed = `Ollama - ${selectedModel} (Offline Local AI)`;
+                  ollamaSuccess = true;
+                }
               }
             }
+          } catch (ollamaErr: any) {
+            console.log("[Offline AI] Local Ollama extraction skipped or failed:", ollamaErr.message);
           }
-        } catch (ollamaErr: any) {
-          console.log("[Offline AI] Local Ollama extraction skipped or failed:", ollamaErr.message);
-        }
 
-        // Enforce 100% Offline Local Architecture (No cloud fallbacks used)
-        if (!ollamaSuccess) {
-          console.log("[Offline AI] Pure Local Mode: Relying on PaddleOCR / EasyOCR + Custom Local Arabic NLP Engine rules.");
-        }
+          // Enforce 100% Offline Local Architecture (No cloud fallbacks used)
+          if (!ollamaSuccess) {
+            console.log("[Offline AI] Pure Local Mode: Relying on PaddleOCR / EasyOCR + Custom Local Arabic NLP Engine rules.");
+          }
 
-        // Apply fallback regex if all fails
-        if (!extractedData.bookNumber) {
-          const bookMatch = extractedText.match(/(?:العدد|رقم|عدد)\s*[:\/-]?\s*(\d+[\/\d]*)/);
-          if (bookMatch) extractedData.bookNumber = bookMatch[1];
-        }
-        if (!extractedData.bookDate) {
-          const dateMatch = extractedText.match(/(\d{4}[\/-]\d{1,2}[\/-]\d{1,2})|(\d{1,2}[\/-]\d{1,2}[\/-]\d{4})/);
-          if (dateMatch) extractedData.bookDate = dateMatch[0];
-        }
-        if (!extractedData.employeeName) {
-          const nameMatch = extractedText.match(/(?:الموظف|السيد|الموظفة|السيدة)\s*[:\/-]?\s*([أ-ي]{3,10}\s+[أ-ي]{3,10}(?:\s+[أ-ي]{3,10}){1,3})/);
-          if (nameMatch) extractedData.employeeName = nameMatch[1].trim();
-        }
+          // Apply fallback regex if all fails
+          if (!extractedData.bookNumber) {
+            const bookMatch = extractedText.match(/(?:العدد|رقم|عدد)\s*[:\/-]?\s*(\d+[\/\d]*)/);
+            if (bookMatch) extractedData.bookNumber = bookMatch[1];
+          }
+          if (!extractedData.bookDate) {
+            const dateMatch = extractedText.match(/(\d{4}[\/-]\d{1,2}[\/-]\d{1,2})|(\d{1,2}[\/-]\d{1,2}[\/-]\d{4})/);
+            if (dateMatch) extractedData.bookDate = dateMatch[0];
+          }
+          if (!extractedData.employeeName) {
+            const nameMatch = extractedText.match(/(?:الموظف|السيد|الموظفة|السيدة)\s*[:\/-]?\s*([أ-ي]{3,10}\s+[أ-ي]{3,10}(?:\s+[أ-ي]{3,10}){1,3})/);
+            if (nameMatch) extractedData.employeeName = nameMatch[1].trim();
+          }
 
-        if (!extractedData.docContent) {
-          let startIdx = 0;
-          let foundPattern = false;
-          const text = extractedText || "";
-          
-          if (extractedData.subject) {
-            const subjPos = text.indexOf(extractedData.subject);
-            if (subjPos !== -1) {
-              startIdx = subjPos + extractedData.subject.length;
-              foundPattern = true;
+          if (!extractedData.docContent) {
+            let startIdx = 0;
+            let foundPattern = false;
+            const text = extractedText || "";
+            
+            if (extractedData.subject) {
+              const subjPos = text.indexOf(extractedData.subject);
+              if (subjPos !== -1) {
+                startIdx = subjPos + extractedData.subject.length;
+                foundPattern = true;
+              }
             }
-          }
           
           if (!foundPattern) {
             const subjectPatterns = [
@@ -440,6 +547,7 @@ async function startServer() {
           extractedData.docContent = docContent;
         }
       }
+    }
 
       // 3. Generate QR Code
       let qrCode = "";

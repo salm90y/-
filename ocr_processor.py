@@ -381,7 +381,8 @@ def main():
                     extracted_text_list.append(text)
             
             full_pdf_text = "\n".join(extracted_text_list).strip()
-            if full_pdf_text:
+            # If native text is extracted and has substantial content, use it
+            if len(full_pdf_text) > 30:
                 extracted_text = full_pdf_text
                 ocr_engine = "PyPDF (Native PDF)"
         except Exception as e:
@@ -389,36 +390,75 @@ def main():
 
     # 2. Run OCR if PDF extraction is empty or it's an Image
     if not extracted_text:
-        # A. Try PaddleOCR first (The gold standard for offline Arabic OCR)
         try:
-            from paddleocr import PaddleOCR
-            # Initialize with Arabic ('ar') language support
-            ocr = PaddleOCR(use_angle_cls=True, lang='ar', show_log=False)
-            results = ocr.ocr(file_path, cls=True)
-            
-            text_lines = []
-            if results and results[0]:
-                for line in results[0]:
-                    # line[1][0] contains the text
-                    text_lines.append(line[1][0])
-            
-            extracted_text = "\n".join(text_lines)
-            ocr_engine = "PaddleOCR PP-OCRv4 (Offline Professional AI)"
-        except Exception as paddle_err:
-            # B. Try EasyOCR as a robust fallback
-            try:
-                import easyocr
-                reader = easyocr.Reader(['ar', 'en'], gpu=False)
-                results = reader.readtext(file_path, detail=0)
-                extracted_text = "\n".join(results)
-                ocr_engine = "EasyOCR (Offline Fallback AI)"
-            except Exception as easy_err:
-                # C. Fallback to Tesseract or crash gracefully
-                print(json.dumps({
-                    "error": "OCR engines (PaddleOCR & EasyOCR) failed or are not installed.",
-                    "details": f"PaddleOCR: {str(paddle_err)}, EasyOCR: {str(easy_err)}"
-                }))
-                sys.exit(1)
+            import pytesseract
+            from PIL import Image, ImageEnhance
+
+            # Preprocessing helper to improve Tesseract Arabic accuracy
+            def preprocess_img(img):
+                # Convert to grayscale
+                img_gray = img.convert('L')
+                # Increase contrast
+                enhancer = ImageEnhance.Contrast(img_gray)
+                img_contrast = enhancer.enhance(2.0)
+                # Resize if small to improve OCR accuracy
+                if img_contrast.width < 1500:
+                    factor = 1500.0 / img_contrast.width
+                    try:
+                        resample_filter = Image.Resampling.LANCZOS
+                    except AttributeError:
+                        try:
+                            resample_filter = Image.LANCZOS
+                        except AttributeError:
+                            resample_filter = Image.BICUBIC
+                    img_contrast = img_contrast.resize(
+                        (int(img_contrast.width * factor), int(img_contrast.height * factor)), 
+                        resample_filter
+                    )
+                return img_contrast
+
+            if file_path.lower().endswith('.pdf'):
+                # Scanned PDF - convert pages to images using PyMuPDF
+                try:
+                    import fitz  # PyMuPDF
+                    doc = fitz.open(file_path)
+                    ocr_lines = []
+                    
+                    for i in range(len(doc)):
+                        page = doc.load_page(i)
+                        pix = page.get_pixmap(dpi=150)
+                        img_temp_path = f"{file_path}_page_{i}.png"
+                        pix.save(img_temp_path)
+                        
+                        # Process temp image
+                        with Image.open(img_temp_path) as img:
+                            processed_img = preprocess_img(img)
+                            text = pytesseract.image_to_string(processed_img, lang='ara+eng')
+                            if text:
+                                ocr_lines.append(text)
+                        
+                        # Remove temp file
+                        if os.path.exists(img_temp_path):
+                            os.remove(img_temp_path)
+                    
+                    extracted_text = "\n\n".join(ocr_lines).strip()
+                    ocr_engine = "Tesseract-OCR Offline (Scanned PDF)"
+                except Exception as pdf_ocr_err:
+                    extracted_text = f"خطأ في معالجة ملف PDF كصور: {str(pdf_ocr_err)}"
+                    ocr_engine = "None (Error)"
+            else:
+                # Image file (PNG, JPG, TIFF, etc.)
+                with Image.open(file_path) as img:
+                    processed_img = preprocess_img(img)
+                    extracted_text = pytesseract.image_to_string(processed_img, lang='ara+eng').strip()
+                    ocr_engine = "Tesseract-OCR Offline (Image AI)"
+                    
+        except Exception as ocr_err:
+            print(json.dumps({
+                "error": "Tesseract OCR failed offline. Please ensure tesseract-ocr is installed.",
+                "details": str(ocr_err)
+            }))
+            sys.exit(1)
 
     # 3. Extract Structured Fields using our Offline NLP Entity Engine
     extracted_fields = extract_fields_nlp(extracted_text)
