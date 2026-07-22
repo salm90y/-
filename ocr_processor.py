@@ -500,75 +500,122 @@ def main():
 
     # 2. Run OCR if PDF extraction is empty or it's an Image
     if not extracted_text:
+        # Try high-accuracy offline PaddleOCR first
         try:
-            import pytesseract
-            from PIL import Image, ImageEnhance
-
-            # Preprocessing helper to improve Tesseract Arabic accuracy
-            def preprocess_img(img):
-                # Convert to grayscale
-                img_gray = img.convert('L')
-                # Increase contrast
-                enhancer = ImageEnhance.Contrast(img_gray)
-                img_contrast = enhancer.enhance(2.0)
-                # Resize if small to improve OCR accuracy
-                if img_contrast.width < 1500:
-                    factor = 1500.0 / img_contrast.width
-                    try:
-                        resample_filter = Image.Resampling.LANCZOS
-                    except AttributeError:
-                        try:
-                            resample_filter = Image.LANCZOS
-                        except AttributeError:
-                            resample_filter = Image.BICUBIC
-                    img_contrast = img_contrast.resize(
-                        (int(img_contrast.width * factor), int(img_contrast.height * factor)), 
-                        resample_filter
-                    )
-                return img_contrast
-
+            from paddleocr import PaddleOCR
+            ocr = PaddleOCR(use_textline_orientation=True, lang='ar')
+            
             if file_path.lower().endswith('.pdf'):
-                # Scanned PDF - convert pages to images using PyMuPDF
-                try:
-                    import fitz  # PyMuPDF
-                    doc = fitz.open(file_path)
-                    ocr_lines = []
+                import fitz  # PyMuPDF
+                doc = fitz.open(file_path)
+                ocr_lines = []
+                for i in range(len(doc)):
+                    page = doc.load_page(i)
+                    pix = page.get_pixmap(dpi=150)
+                    img_temp_path = f"{file_path}_page_{i}.png"
+                    pix.save(img_temp_path)
                     
-                    for i in range(len(doc)):
-                        page = doc.load_page(i)
-                        pix = page.get_pixmap(dpi=150)
-                        img_temp_path = f"{file_path}_page_{i}.png"
-                        pix.save(img_temp_path)
-                        
-                        # Process temp image
-                        with Image.open(img_temp_path) as img:
-                            processed_img = preprocess_img(img)
-                            text = pytesseract.image_to_string(processed_img, lang='ara+eng')
-                            if text:
-                                ocr_lines.append(text)
-                        
-                        # Remove temp file
-                        if os.path.exists(img_temp_path):
-                            os.remove(img_temp_path)
+                    try:
+                        result = ocr.ocr(img_temp_path, cls=True)
+                        if result:
+                            for res in result:
+                                if res:
+                                    for line in res:
+                                        ocr_lines.append(line[1][0])
+                    except Exception as e_inner:
+                        sys.stderr.write(f"PaddleOCR page {i} failed: {str(e_inner)}\n")
                     
-                    extracted_text = "\n\n".join(ocr_lines).strip()
-                    ocr_engine = "Tesseract-OCR Offline (Scanned PDF)"
-                except Exception as pdf_ocr_err:
-                    extracted_text = f"خطأ في معالجة ملف PDF كصور: {str(pdf_ocr_err)}"
-                    ocr_engine = "None (Error)"
+                    if os.path.exists(img_temp_path):
+                        os.remove(img_temp_path)
+                
+                extracted_text = "\n".join(ocr_lines).strip()
+                ocr_engine = "PaddleOCR Offline (Scanned PDF)"
             else:
-                # Image file (PNG, JPG, TIFF, etc.)
-                with Image.open(file_path) as img:
-                    processed_img = preprocess_img(img)
-                    extracted_text = pytesseract.image_to_string(processed_img, lang='ara+eng').strip()
-                    ocr_engine = "Tesseract-OCR Offline (Image AI)"
-                    
-        except Exception as ocr_err:
-            print(json.dumps({
-                "error": "Tesseract OCR failed offline. Please ensure tesseract-ocr is installed.",
-                "details": str(ocr_err)
-            }))
-            sys.exit(1)
+                # Image file (PNG, JPG, WebP, etc.)
+                result = ocr.ocr(file_path, cls=True)
+                ocr_lines = []
+                if result:
+                    for res in result:
+                        if res:
+                            for line in res:
+                                ocr_lines.append(line[1][0])
+                extracted_text = "\n".join(ocr_lines).strip()
+                ocr_engine = "PaddleOCR Offline (Image AI)"
+        except Exception as paddle_err:
+            sys.stderr.write(f"PaddleOCR offline failed, falling back to Tesseract-OCR. Error: {str(paddle_err)}\n")
+            extracted_text = ""
+
+        # Fallback to Tesseract-OCR if PaddleOCR was unsuccessful or failed
+        if not extracted_text:
+            try:
+                import pytesseract
+                from PIL import Image, ImageEnhance
+
+                # Preprocessing helper to improve Tesseract Arabic accuracy
+                def preprocess_img(img):
+                    # Convert to grayscale
+                    img_gray = img.convert('L')
+                    # Increase contrast
+                    enhancer = ImageEnhance.Contrast(img_gray)
+                    img_contrast = enhancer.enhance(2.0)
+                    # Resize if small to improve OCR accuracy
+                    if img_contrast.width < 1500:
+                        factor = 1500.0 / img_contrast.width
+                        try:
+                            resample_filter = Image.Resampling.LANCZOS
+                        except AttributeError:
+                            try:
+                                resample_filter = Image.LANCZOS
+                            except AttributeError:
+                                resample_filter = Image.BICUBIC
+                        img_contrast = img_contrast.resize(
+                            (int(img_contrast.width * factor), int(img_contrast.height * factor)), 
+                            resample_filter
+                        )
+                    return img_contrast
+
+                if file_path.lower().endswith('.pdf'):
+                    # Scanned PDF - convert pages to images using PyMuPDF
+                    try:
+                        import fitz  # PyMuPDF
+                        doc = fitz.open(file_path)
+                        ocr_lines = []
+                        
+                        for i in range(len(doc)):
+                            page = doc.load_page(i)
+                            pix = page.get_pixmap(dpi=150)
+                            img_temp_path = f"{file_path}_page_{i}.png"
+                            pix.save(img_temp_path)
+                            
+                            # Process temp image
+                            with Image.open(img_temp_path) as img:
+                                processed_img = preprocess_img(img)
+                                text = pytesseract.image_to_string(processed_img, lang='ara+eng')
+                                if text:
+                                    ocr_lines.append(text)
+                            
+                            # Remove temp file
+                            if os.path.exists(img_temp_path):
+                                os.remove(img_temp_path)
+                        
+                        extracted_text = "\n\n".join(ocr_lines).strip()
+                        ocr_engine = "Tesseract-OCR Offline (Scanned PDF)"
+                    except Exception as pdf_ocr_err:
+                        extracted_text = f"خطأ في معالجة ملف PDF كصور: {str(pdf_ocr_err)}"
+                        ocr_engine = "None (Error)"
+                else:
+                    # Image file (PNG, JPG, TIFF, etc.)
+                    with Image.open(file_path) as img:
+                        processed_img = preprocess_img(img)
+                        extracted_text = pytesseract.image_to_string(processed_img, lang='ara+eng').strip()
+                        ocr_engine = "Tesseract-OCR Offline (Image AI)"
+                        
+            except Exception as ocr_err:
+                print(json.dumps({
+                    "error": "Tesseract OCR failed offline. Please ensure tesseract-ocr is installed.",
+                    "details": str(ocr_err)
+                }))
+                sys.exit(1)
 
     # 3. Extract Structured Fields using our Offline NLP Entity Engine
     extracted_fields = extract_fields_nlp(extracted_text)

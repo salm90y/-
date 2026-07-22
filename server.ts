@@ -3,6 +3,7 @@
  * SPDX-License-Identifier: Apache-2.0
  */
 
+import "dotenv/config";
 import express from "express";
 import path from "path";
 import { createServer as createViteServer } from "vite";
@@ -205,18 +206,23 @@ async function startServer() {
   });
 
   // Helper to execute Python-based Offline AI OCR & NLP Extractor
-  function runPythonExtractor(filePath: string): Promise<{ text: string; ocr_engine: string; fields: any }> {
+  function runPythonExtractor(filePath: string, disableGemini: boolean = true): Promise<{ text: string; ocr_engine: string; fields: any }> {
     return new Promise((resolve, reject) => {
       const scriptPath = path.join(process.cwd(), "ocr_processor.py");
       const cmd = process.platform === "win32" ? "python" : "python3";
       
-      console.log(`[Offline AI] Running Python Extractor using command: ${cmd} "${scriptPath}" "${filePath}"`);
-      exec(`"${cmd}" "${scriptPath}" "${filePath}"`, { encoding: 'utf8', maxBuffer: 15 * 1024 * 1024 }, (error, stdout, stderr) => {
+      const childEnv = { ...process.env };
+      if (disableGemini) {
+        delete childEnv.GEMINI_API_KEY;
+      }
+      
+      console.log(`[Offline AI] Running Python Extractor (Offline Mode: ${disableGemini}) using command: ${cmd} "${scriptPath}" "${filePath}"`);
+      exec(`"${cmd}" "${scriptPath}" "${filePath}"`, { env: childEnv, encoding: 'utf8', maxBuffer: 15 * 1024 * 1024 }, (error, stdout, stderr) => {
         if (error) {
           // If first command failed, try fallback
           const fallbackCmd = cmd === "python" ? "python3" : "python";
           console.log(`[Offline AI] Python Extractor retry with fallback: ${fallbackCmd}`);
-          exec(`"${fallbackCmd}" "${scriptPath}" "${filePath}"`, { encoding: 'utf8', maxBuffer: 15 * 1024 * 1024 }, (err2, stdout2, stderr2) => {
+          exec(`"${fallbackCmd}" "${scriptPath}" "${filePath}"`, { env: childEnv, encoding: 'utf8', maxBuffer: 15 * 1024 * 1024 }, (err2, stdout2, stderr2) => {
             if (err2) {
               reject(new Error(stderr2 || err2.message));
             } else {
@@ -259,23 +265,22 @@ async function startServer() {
       // 1. Try Cloud-based Gemini AI first if requested and client is initialized
       if (useGemini && aiClient) {
         try {
-          console.log(`[Gemini AI] Starting Cloud AI Multimodal processing for ${file.originalname}...`);
           const fileData = fs.readFileSync(file.path);
           const base64Data = fileData.toString("base64");
-          
+
           let mimeType = file.mimetype;
           if (file.originalname.toLowerCase().endsWith('.pdf')) {
             mimeType = "application/pdf";
           } else if (file.originalname.toLowerCase().endsWith('.png')) {
             mimeType = "image/png";
-          } else if (file.originalname.toLowerCase().endsWith('.jpg') || file.originalname.toLowerCase().endsWith('.jpeg')) {
-            mimeType = "image/jpeg";
           } else if (file.originalname.toLowerCase().endsWith('.webp')) {
             mimeType = "image/webp";
+          } else if (file.originalname.toLowerCase().endsWith('.jpg') || file.originalname.toLowerCase().endsWith('.jpeg')) {
+            mimeType = "image/jpeg";
           }
 
           const response = await aiClient.models.generateContent({
-            model: "gemini-3.6-flash",
+            model: "gemini-2.5-flash",
             contents: [
               {
                 inlineData: {
@@ -285,7 +290,7 @@ async function startServer() {
               },
               {
                 text: `أنت نظام ذكاء اصطناعي محترف ومسؤول عن أرشفة وتصنيف الكتب والوثائق الرسمية باللغة العربية بدقة متناهية 100%.
-قم بقراءة وتحليل الملف الممسوح ضوئياً واستخراج الحقول التالية بدقة متناهية وتقديم النتيجة ككائن JSON نظيف يطابق هذا الهيكل تماماً:
+قم بقراءة وتحليل الملف الممسوح ضوئياً واستخرج الحقول التالية بدقة متناهية وتقديم النتيجة ككائن JSON نظيف يطابق هذا الهيكل تماماً:
 {
   "bookNumber": "رقم الكتاب الرسمي أو العدد المكتوب في أعلى الكتاب (مثل: ق/٢/٥٥٤، عدد سري/55)",
   "bookDate": "تاريخ الكتاب الرسمي بصيغة YYYY-MM-DD أو كما هو مكتوب",
@@ -318,7 +323,7 @@ async function startServer() {
             }
             const parsed = JSON.parse(cleanJsonText);
             extractedText = parsed.text || "تم الاستخراج بنجاح";
-            ocrEngineUsed = "Gemini 3.6 Flash (Super High Accuracy Cloud AI)";
+            ocrEngineUsed = "Gemini 2.5 Flash (Super High Accuracy Cloud AI)";
             
             extractedData = {
               bookNumber: parsed.bookNumber || "",
@@ -335,9 +340,9 @@ async function startServer() {
               statisticalNumber: parsed.statisticalNumber || "",
               rank: parsed.rank || ""
             };
-            extractionEngineUsed = "Gemini 3.6 Flash (Cloud Structured AI)";
+            extractionEngineUsed = "Gemini 2.5 Flash (Cloud Structured AI)";
             extractionSuccess = true;
-            console.log(`[Gemini AI] Structured extraction completed successfully with Gemini 3.6 Flash!`);
+            console.log(`[Gemini AI] Structured extraction completed successfully with Gemini 2.5 Flash!`);
           }
         } catch (geminiError: any) {
           console.error("[Gemini AI] Processing failed, falling back to local extractor. Error:", geminiError.message);
@@ -602,12 +607,14 @@ async function startServer() {
         bookNumber = ?, bookDate = ?, issueDate = ?, issuer = ?,
         recipient = ?, subject = ?, docContent = ?, secretNumber = ?, docType = ?,
         employeeName = ?, keywords = ?, statisticalNumber = ?, rank = ?,
+        extractedText = ?,
         updatedAt = CURRENT_TIMESTAMP
       WHERE id = ?
     `, [
       data.bookNumber, data.bookDate, data.issueDate, data.issuer,
       data.recipient, data.subject, data.docContent, data.secretNumber, data.docType,
       data.employeeName, data.keywords, data.statisticalNumber, data.rank,
+      data.extractedText,
       id
     ]);
     saveDb();
@@ -888,6 +895,122 @@ async function startServer() {
     } catch (err: any) {
       res.status(500).json({ error: err.message || "Failed to save settings" });
     }
+  });
+
+  // Lexical correction for Arabic text
+  const ARABIC_DICTIONARY = [
+    "جمهورية", "العراق", "وزارة", "التربية", "التعليم", "العالي", "الداخلية", "الدفاع", "المالية", "العدل", "الصحة", "العمل", "الشؤون", "الاجتماعية", "النفط", "الكهرباء", "التخطيط", "الزراعة", "المديرية", "العامة", "قسم", "شعبة", "مكتب", "السيد", "المحترم", "الموضوع", "كتابنا", "ذي", "العدد", "التاريخ", "يرجى", "التفضل", "بالاطلاع", "الاجراءات", "اللازمة", "العمل", "بموجبه", "الموظف", "الموظفة", "القرار", "الأمر", "الإداري", "الوزاري", "العقوبة", "سحب", "اليد", "تنزيل", "درجة", "ترقية", "علاوة", "تقاعد", "احالة", "السن", "القانوني", "وفاة", "اجازة", "سنوية", "مرضية", "شؤون", "الموظفين", "الموارد", "البشرية", "الذاتية", "المالي", "القانوني", "الإدارية", "الفنية", "العقود", "اللجنة", "التحقيقية", "محضر", "المصادقة", "الوزير", "المدير", "العام", "معاون", "رئيس", "مساعد", "مهندس", "طبيب", "معلم", "مدرس", "باحث", "مشرف", "مفتش", "أستاذ", "الدكتور", "حقوقي", "ملاحظ", "كاتب", "أمين", "صندوق", "سائق", "حارس", "استناداً", "لأحكام", "قانون", "الخدمة", "المدنية", "رقم", "سنة", "المعدل", "التعليمات", "الصلاحية", "المخولة", "لنا", "تقرر", "توجيه", "لفت", "نظر", "انذار", "قطع", "راتب", "توبيخ", "الفصل", "العزل", "قررنا", "ما", "يلي", "الموافقة", "على", "نقل", "تنسيب", "اعارة", "خدمات", "مستحقات", "تخصيص", "صرف", "مكافأة", "تأديبية", "الهيكل", "التنظيمي", "الرسمية", "الأرشفة", "الالكترونية", "الحفظ", "مستند", "وثيقة", "قرار", "بيان", "اعلان", "أمر", "توجيهات", "موافقة", "مخاطبة", "صادر", "وارد", "سجل", "الأوراق", "الملفات", "أرشيف", "شعبة", "قسم", "دائرة", "مؤسسة", "هيئة", "رئاسة", "مجلس", "الوزراء", "النواب", "سيادة", "فخامة", "دولة", "معالي", "سعادة", "حضرة", "الأستاذ", "الدكتور", "المحترم", "الموقر", "الراقي", "الطيب", "الفاضل", "الكريم", "الأعز", "الأقدم", "الأول", "الثاني", "الثالث", "المستندات"
+  ];
+
+  function normalizeArabic(word: string): string {
+    if (!word) return "";
+    return word
+      .replace(/[\u064B-\u0652]/g, '') // Remove diacritics
+      .replace(/[أإآ]/g, 'ا')
+      .replace(/ة/g, 'ه')
+      .replace(/ى/g, 'ي')
+      .trim();
+  }
+
+  function levenshteinDistance(a: string, b: string): number {
+    const matrix: number[][] = [];
+    for (let i = 0; i <= b.length; i++) {
+      matrix[i] = [i];
+    }
+    for (let j = 0; j <= a.length; j++) {
+      matrix[0][j] = j;
+    }
+    for (let i = 1; i <= b.length; i++) {
+      for (let j = 1; j <= a.length; j++) {
+        if (b.charAt(i - 1) === a.charAt(j - 1)) {
+          matrix[i][j] = matrix[i - 1][j - 1];
+        } else {
+          matrix[i][j] = Math.min(
+            matrix[i - 1][j - 1] + 1, // substitution
+            matrix[i][j - 1] + 1,     // insertion
+            matrix[i - 1][j] + 1      // deletion
+          );
+        }
+      }
+    }
+    return matrix[b.length][a.length];
+  }
+
+  function getSpellingCorrection(text: string) {
+    const wordRegex = /([\u0600-\u06FFa-zA-Z]+)/g;
+    let match;
+    let lastIndex = 0;
+    let resultText = "";
+    const corrections: Array<{
+      original: string;
+      corrected: string;
+      confidence: number;
+      index: number;
+    }> = [];
+
+    wordRegex.lastIndex = 0;
+    let wordIndex = 0;
+
+    while ((match = wordRegex.exec(text)) !== null) {
+      const word = match[1];
+      const matchStart = match.index;
+      
+      resultText += text.substring(lastIndex, matchStart);
+      
+      const isArabic = /[\u0600-\u06FF]/.test(word);
+      let correctedWord = word;
+
+      if (isArabic && word.length > 3) {
+        const normalizedWord = normalizeArabic(word);
+        let bestMatch = "";
+        let minDistance = Infinity;
+
+        const perfectlyInDict = ARABIC_DICTIONARY.some(
+          dictWord => normalizeArabic(dictWord) === normalizedWord
+        );
+
+        if (!perfectlyInDict) {
+          for (const dictWord of ARABIC_DICTIONARY) {
+            const normalizedDictWord = normalizeArabic(dictWord);
+            const dist = levenshteinDistance(normalizedWord, normalizedDictWord);
+            if (dist < minDistance) {
+              minDistance = dist;
+              bestMatch = dictWord;
+            }
+          }
+
+          const maxLen = Math.max(word.length, bestMatch.length);
+          const confidence = 1 - (minDistance / maxLen);
+
+          if (minDistance > 0 && minDistance <= 2 && confidence >= 0.75 && bestMatch) {
+            correctedWord = bestMatch;
+            corrections.push({
+              original: word,
+              corrected: bestMatch,
+              confidence: Math.round(confidence * 100) / 100,
+              index: wordIndex
+            });
+          }
+        }
+      }
+
+      resultText += correctedWord;
+      lastIndex = wordRegex.lastIndex;
+      wordIndex++;
+    }
+
+    if (lastIndex < text.length) {
+      resultText += text.substring(lastIndex);
+    }
+
+    return { correctedText: resultText, corrections };
+  }
+
+  app.post("/api/correct-text", (req, res) => {
+    const { text } = req.body;
+    if (!text) return res.status(400).json({ error: "Text is required" });
+    const result = getSpellingCorrection(text);
+    res.json(result);
   });
 
   // Serve static uploads

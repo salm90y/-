@@ -24,7 +24,7 @@ const UploadModal: React.FC<UploadModalProps> = ({ onClose, onSuccess }) => {
   const [isUploading, setIsUploading] = useState(false);
   const [status, setStatus] = useState<'idle' | 'uploading' | 'processing' | 'success' | 'error'>('idle');
   const [error, setError] = useState('');
-  const [useGemini, setUseGemini] = useState(true);
+  const [useGemini, setUseGemini] = useState(false);
 
   const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     if (e.target.files && e.target.files[0]) {
@@ -210,10 +210,10 @@ const UploadModal: React.FC<UploadModalProps> = ({ onClose, onSuccess }) => {
                   <div className={`w-3 h-3 rounded-full flex items-center justify-center ${!useGemini ? 'bg-emerald-600' : 'border border-slate-300'}`}>
                     {!useGemini && <div className="w-1.5 h-1.5 bg-white rounded-full" />}
                   </div>
-                  <span className={`text-sm font-bold ${!useGemini ? 'text-emerald-900' : 'text-slate-700'}`}>معالجة أوفلاين (محلي)</span>
+                  <span className={`text-sm font-bold ${!useGemini ? 'text-emerald-900' : 'text-slate-700'}`}>معالجة أوفلاين (PaddleOCR الذكي)</span>
                 </div>
                 <span className="text-[10px] text-slate-400 leading-normal">
-                  نظام الأرشفة المحلي (PaddleOCR / Tesseract). مخصص لغرض العمل بدون إنترنت على خادم المؤسسة.
+                  نظام الأرشفة المحلي القوي (PaddleOCR ذو الدقة العالية مع معالج النصوص المتقدم). يعمل 100% بدون إنترنت داخل خادم المؤسسة.
                 </span>
               </button>
             </div>
