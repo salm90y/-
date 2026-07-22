@@ -9,10 +9,24 @@ import os
 import re
 import json
 
+# Convert Eastern Arabic and Persian numerals to Western digits (0-9)
+def convert_east_to_west_digits(text):
+    if not text:
+        return ""
+    eastern_to_western = {
+        '٠': '0', '١': '1', '٢': '2', '٣': '3', '٤': '4', '٥': '5', '٦': '6', '٧': '7', '٨': '8', '٩': '9',
+        '۰': '0', '۱': '1', '۲': '2', '۳': '3', '۴': '4', '۵': '5', '۶': '6', '۷': '7', '۸': '8', '۹': '9'
+    }
+    for east, west in eastern_to_western.items():
+        text = text.replace(east, west)
+    return text
+
 # Normalize Arabic text characters for consistent parsing
 def normalize_arabic(text):
     if not text:
         return ""
+    # Convert Eastern digits to Western digits
+    text = convert_east_to_west_digits(text)
     # Normalize Alef variations
     text = re.sub(r'[أإآ]', 'ا', text)
     # Normalize Teh Marbuta
@@ -26,6 +40,8 @@ def extract_fields_nlp(text):
     Advanced offline Arabic Natural Language Processing (NLP) heuristic engine.
     Extracts structured fields from scanned administrative letters with high accuracy.
     """
+    # Pre-convert all eastern/persian digits in raw text to standard western digits
+    text = convert_east_to_west_digits(text)
     normalized = normalize_arabic(text)
     lines = [line.strip() for line in text.split('\n') if line.strip()]
     norm_lines = [normalize_arabic(line) for line in lines]
@@ -491,12 +507,26 @@ def main():
                     extracted_text_list.append(text)
             
             full_pdf_text = "\n".join(extracted_text_list).strip()
-            # If native text is extracted and has substantial content, use it
-            if len(full_pdf_text) > 30:
+            
+            # Check if extracted text is valid and has numbers/structure
+            # If a native PDF has no digits (neither 0-9 nor ٠-٩), it is likely scanned or corrupt
+            has_digits = any(char.isdigit() or char in '٠١٢٣٤٥٦٧٨٩۰۱۲۳۴۵۶۷۸۹' for char in full_pdf_text)
+            
+            # Check for scrambled text: high percentage of single isolated letters
+            words = full_pdf_text.split()
+            single_letter_count = len(re.findall(r'\b[أ-ي]\b', full_pdf_text))
+            is_scrambled = False
+            if words:
+                is_scrambled = (single_letter_count / len(words)) > 0.35
+                
+            # If native text is extracted, contains digits, is not scrambled, and has substantial content
+            if len(full_pdf_text) > 30 and has_digits and not is_scrambled:
                 extracted_text = full_pdf_text
                 ocr_engine = "PyPDF (Native PDF)"
+            else:
+                sys.stderr.write("Native PDF extraction is suspected to be scanned, scrambled, or missing numbers. Bypassing native text to use PaddleOCR...\n")
         except Exception as e:
-            pass
+            sys.stderr.write(f"Native PDF extraction failed: {str(e)}\n")
 
     # 2. Run OCR if PDF extraction is empty or it's an Image
     if not extracted_text:
