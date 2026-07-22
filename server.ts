@@ -310,7 +310,13 @@ async function startServer() {
 
           const resultText = response.text;
           if (resultText) {
-            const parsed = JSON.parse(resultText);
+            let cleanJsonText = resultText.trim();
+            if (cleanJsonText.startsWith("```")) {
+              cleanJsonText = cleanJsonText.replace(/^```(?:json)?\n?/, "");
+              cleanJsonText = cleanJsonText.replace(/```$/, "");
+              cleanJsonText = cleanJsonText.trim();
+            }
+            const parsed = JSON.parse(cleanJsonText);
             extractedText = parsed.text || "تم الاستخراج بنجاح";
             ocrEngineUsed = "Gemini 3.6 Flash (Super High Accuracy Cloud AI)";
             

@@ -366,6 +366,116 @@ def main():
         print(json.dumps({"error": f"File not found at {file_path}"}))
         sys.exit(1)
 
+    # Try Cloud-based High-Accuracy extraction via direct API call first
+    api_key = os.getenv("GEMINI_API_KEY")
+    if api_key:
+        try:
+            import base64
+            import urllib.request
+            
+            mime_type = "application/pdf"
+            if file_path.lower().endswith(('.png', '.jpg', '.jpeg', '.webp')):
+                if file_path.lower().endswith('.png'):
+                    mime_type = "image/png"
+                elif file_path.lower().endswith('.webp'):
+                    mime_type = "image/webp"
+                else:
+                    mime_type = "image/jpeg"
+            
+            with open(file_path, "rb") as f:
+                file_bytes = f.read()
+            base64_data = base64.b64encode(file_bytes).decode('utf-8')
+            
+            # Using gemini-2.5-flash for rapid multimodal Arabic OCR
+            url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={api_key}"
+            
+            prompt = """أنت نظام ذكاء اصطناعي محترف ومسؤول عن أرشفة وتصنيف الكتب والوثائق الرسمية باللغة العربية بدقة متناهية 100%.
+قم بقراءة وتحليل الملف الممسوح ضوئياً واستخرج الحقول التالية بدقة متناهية وتقديم النتيجة ككائن JSON نظيف يطابق هذا الهيكل تماماً:
+{
+  "bookNumber": "رقم الكتاب الرسمي أو العدد المكتوب في أعلى الكتاب (مثل: ق/٢/٥٥٤، عدد سري/55)",
+  "bookDate": "تاريخ الكتاب الرسمي بصيغة YYYY-MM-DD أو كما هو مكتوب",
+  "issuer": "الجهة الحكومية أو الدائرة المصدرة للكتاب بدقة (مثل: وزارة التربية)",
+  "recipient": "الجهة الموجه إليها الكتاب (المستلم)",
+  "subject": "عنوان وموضوع الكتاب بدقة كاملة وبشكل كامل",
+  "docContent": "مضمون ونص الكتاب الفعلي (الرسالة أو المتن). ابدأ من نهاية عنوان الموضوع وحتى نهاية جملة 'يرجى التفضل بالاطلاع' أو 'للتفضل بالاطلاع والعمل بموجبه' أو الجملة الختامية المشابهة. لا تقم بالتلخيص، واجلب النص كاملاً كما هو.",
+  "secretNumber": "الرقم السري للكتاب إن وجد",
+  "docType": "نوع وتصنيف المستند، ويجب أن يكون أحد التصنيفات التالية فقط: (عقوبة، تقاعد، انفكاك، نقل، الحاق، التحاق، وفاة، اجازة، سحب يد، ترقية، علاوة، أخرى)",
+  "employeeName": "الاسم الثلاثي أو الرباعي للموظف أو الشخص المعني بالكتاب المذكور كطرف أساسي",
+  "keywords": "كلمات دلالية مناسبة مفصولة بفاصلة أو '،'",
+  "statisticalNumber": "الرقم الإحصائي أو الرقم الوظيفي للموظف إن وجد",
+  "rank": "العنوان الوظيفي أو الرتبة أو الدرجة المذكورة للموظف",
+  "text": "كامل النص المستخرج حرفياً من الوثيقة لمطابقته وفهرسته"
+}"""
+
+            payload = {
+                "contents": [
+                    {
+                        "parts": [
+                            {
+                                "inlineData": {
+                                    "mimeType": mime_type,
+                                    "data": base64_data
+                                }
+                            },
+                            {
+                                "text": prompt
+                            }
+                        ]
+                    }
+                ],
+                "generationConfig": {
+                    "responseMimeType": "application/json"
+                }
+            }
+            
+            headers = {
+                "Content-Type": "application/json",
+                "User-Agent": "aistudio-build"
+            }
+            
+            req = urllib.request.Request(url, data=json.dumps(payload).encode('utf-8'), headers=headers, method='POST')
+            with urllib.request.urlopen(req, timeout=45) as response:
+                res_data = response.read().decode('utf-8')
+                res_json = json.loads(res_data)
+                
+                text_content = res_json['candidates'][0]['content']['parts'][0]['text']
+                
+                # Sanitize JSON response text
+                clean_json_text = text_content.strip()
+                if clean_json_text.startswith("```"):
+                    clean_json_text = re.sub(r'^```(?:json)?\n?', '', clean_json_text)
+                    clean_json_text = re.sub(r'```$', '', clean_json_text)
+                    clean_json_text = clean_json_text.strip()
+                
+                parsed_fields = json.loads(clean_json_text)
+                
+                # Format to output
+                output_data = {
+                    "text": parsed_fields.get("text", parsed_fields.get("docContent", "تم الاستخراج بالكامل بنجاح")),
+                    "ocr_engine": "الذكاء الاصطناعي الهجين (Gemini 2.5-Flash Neural Core)",
+                    "fields": {
+                        "bookNumber": parsed_fields.get("bookNumber", ""),
+                        "bookDate": parsed_fields.get("bookDate", ""),
+                        "issueDate": parsed_fields.get("bookDate", ""),
+                        "issuer": parsed_fields.get("issuer", ""),
+                        "recipient": parsed_fields.get("recipient", ""),
+                        "subject": parsed_fields.get("subject", ""),
+                        "docContent": parsed_fields.get("docContent", ""),
+                        "secretNumber": parsed_fields.get("secretNumber", ""),
+                        "docType": parsed_fields.get("docType", "أخرى"),
+                        "employeeName": parsed_fields.get("employeeName", ""),
+                        "keywords": parsed_fields.get("keywords", ""),
+                        "statisticalNumber": parsed_fields.get("statisticalNumber", ""),
+                        "rank": parsed_fields.get("rank", "")
+                    }
+                }
+                
+                print(json.dumps(output_data, ensure_ascii=False))
+                sys.exit(0)
+                
+        except Exception as gemini_api_err:
+            sys.stderr.write(f"Gemini API offline call failed, falling back to local OCR. Error: {str(gemini_api_err)}\n")
+
     extracted_text = ""
     ocr_engine = "None"
 
