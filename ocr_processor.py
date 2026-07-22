@@ -575,7 +575,45 @@ def main():
             sys.stderr.write(f"PaddleOCR offline failed, falling back to Tesseract-OCR. Error: {str(paddle_err)}\n")
             extracted_text = ""
 
-        # Fallback to Tesseract-OCR if PaddleOCR was unsuccessful or failed
+        # Fallback to EasyOCR if PaddleOCR was unsuccessful or failed
+        if not extracted_text:
+            try:
+                import easyocr
+                # We use gpu=False because the environment is CPU
+                reader = easyocr.Reader(['ar', 'en'], gpu=False)
+                
+                if file_path.lower().endswith('.pdf'):
+                    import fitz
+                    doc = fitz.open(file_path)
+                    ocr_lines = []
+                    for i in range(len(doc)):
+                        page = doc.load_page(i)
+                        pix = page.get_pixmap(dpi=150)
+                        img_temp_path = f"{file_path}_page_{i}_easy.png"
+                        pix.save(img_temp_path)
+                        
+                        try:
+                            result = reader.readtext(img_temp_path, detail=0, paragraph=False)
+                            if result:
+                                ocr_lines.extend(result)
+                        except Exception as e_inner:
+                            sys.stderr.write(f"EasyOCR page {i} failed: {str(e_inner)}\n")
+                        
+                        if os.path.exists(img_temp_path):
+                            os.remove(img_temp_path)
+                    
+                    extracted_text = "\n".join(ocr_lines).strip()
+                    ocr_engine = "EasyOCR Offline (Scanned PDF)"
+                else:
+                    result = reader.readtext(file_path, detail=0, paragraph=False)
+                    if result:
+                        extracted_text = "\n".join(result).strip()
+                    ocr_engine = "EasyOCR Offline (Image AI)"
+            except Exception as easy_err:
+                sys.stderr.write(f"EasyOCR offline failed. Error: {str(easy_err)}\n")
+                extracted_text = ""
+
+        # Fallback to Tesseract-OCR if all else fails
         if not extracted_text:
             try:
                 import pytesseract

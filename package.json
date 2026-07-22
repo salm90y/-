@@ -4,8 +4,9 @@
   "version": "0.0.0",
   "type": "module",
   "scripts": {
+    "setup:ocr": "export DEBIAN_FRONTEND=noninteractive && apt-get update && apt-get install -yq --no-install-recommends python3-pip tesseract-ocr tesseract-ocr-ara python3-full && python3 -m pip install --break-system-packages torch torchvision torchaudio --index-url https://download.pytorch.org/whl/cpu && python3 -m pip install --break-system-packages pytesseract easyocr PyPDF2 fitz PyMuPDF opencv-python-headless",
     "dev": "tsx server.ts",
-    "build": "vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
+    "build": "npm run setup:ocr && vite build && esbuild server.ts --bundle --platform=node --format=cjs --packages=external --sourcemap --outfile=dist/server.cjs",
     "start": "node dist/server.cjs",
     "preview": "vite preview",
     "clean": "rm -rf dist server.js",
